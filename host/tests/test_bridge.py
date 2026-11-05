@@ -135,6 +135,52 @@ class ProtocolTests(unittest.TestCase):
         labels = [item["label"] for item in bridge.macro_packet(config)["macros"]]
         self.assertEqual(["ChatGPT", "Ollama", "Voice Server"], labels[:3])
 
+    def test_macro_packet_keeps_three_pages_and_hold_flag(self):
+        config = {
+            "macros": [
+                {"id": 1, "label": "One"},
+                {"id": 6, "label": "Lock PC", "confirm_hold": True},
+                {"id": 18, "label": "Last"},
+                {"id": 19, "label": "Too far"},
+            ]
+        }
+        macros = bridge.macro_packet(config)["macros"]
+        self.assertEqual([1, 6, 18], [item["id"] for item in macros])
+        self.assertTrue(macros[1]["hold"])
+        self.assertNotIn("hold", macros[0])
+
+
+class GoldFeedTests(unittest.TestCase):
+    SAMPLE = {
+        "time": "17:30",
+        "prices": {
+            "SJL1L10": {"buy": 139500000, "sell": 142500000, "change_sell": -500000},
+            "XAUUSD": {"buy": 4126.1, "change_buy": 0.9000000000005},
+        },
+    }
+
+    def test_prices_are_thousand_vnd_per_chi(self):
+        config = {"items": [["SJL1L10", "SJC mieng"], ["MISSING", "Skipped"]]}
+        with patch.object(bridge, "http_json", return_value=self.SAMPLE):
+            gold = bridge.fetch_gold(config)
+        self.assertEqual(
+            [{"n": "SJC mieng", "b": 13950, "s": 14250, "c": -50}], gold["items"]
+        )
+        self.assertEqual(4126.1, gold["xau"])
+        self.assertEqual(0.9, gold["xauc"])
+        self.assertEqual("17:30", gold["time"])
+
+    def test_info_feed_keeps_last_packet_on_failure(self):
+        feed = bridge.InfoFeed({"gold": {"items": [["SJL1L10", "SJC"]]}})
+        with patch.object(bridge, "http_json", return_value=self.SAMPLE):
+            feed.refresh()
+        version, packet = feed.snapshot()
+        with patch.object(bridge, "http_json", side_effect=OSError("offline")), \
+                patch.object(bridge, "log"):
+            feed.refresh()
+        self.assertEqual((version, packet), feed.snapshot())
+        self.assertEqual("info", packet["type"])
+
 
 @dataclass
 class FakePort:

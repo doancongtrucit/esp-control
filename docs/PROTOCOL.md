@@ -58,7 +58,7 @@ Unavailable sensor values are sent as JSON `null`.
 
 ### `config`
 
-Updates the six touch-button labels:
+Updates the touch-button labels (IDs 1-18, three pages of six):
 
 ```json
 {
@@ -66,12 +66,31 @@ Updates the six touch-button labels:
   "macros": [
     {"id": 1, "label": "ChatGPT"},
     {"id": 2, "label": "Ollama"},
-    {"id": 3, "label": "Voice Server"}
+    {"id": 3, "label": "Voice Server"},
+    {"id": 6, "label": "Lock PC", "hold": true}
   ]
 }
 ```
 
+`hold: true` makes the button require a one-second press before the `macro` frame is sent.
+
 Labels can contain up to 22 characters. The firmware wraps longer labels onto two lines.
+
+### `info`
+
+Gold prices for the `INFO` page. Prices are thousand VND per chi; `c` is the daily change of the sell price. `xau` is XAU/USD per ounce.
+
+```json
+{
+  "type": "info",
+  "g": {
+    "time": "17:30",
+    "items": [{"n": "SJC mieng", "b": 13950, "s": 14250, "c": -50}],
+    "xau": 4126.1,
+    "xauc": 0.9
+  }
+}
+```
 
 ### `ping`
 

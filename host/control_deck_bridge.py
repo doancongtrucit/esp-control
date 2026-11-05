@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """ESP32 PC Control Deck host bridge.
 
-The bridge collects local PC telemetry and sends it to an Elecrow 2.8-inch
-ESP32 display through the board's CH340 USB serial connection. It also maps
-six touch buttons to locally configured actions.
+The bridge collects local PC telemetry and sends it to a 2.8-inch ESP32
+display (Elecrow or ESP32-2432S028) through the board's CH340 USB serial
+connection. It maps up to 18 touch buttons (three pages) to locally configured
+actions and sends Vietnamese gold prices for the INFO page.
 
 No Wi-Fi, Bluetooth, cloud account, API key, or browser credential is needed.
+The gold price feed uses the public vang.today API over the PC's internet.
 """
 from __future__ import annotations
 
@@ -672,12 +674,13 @@ def macro_packet(config: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             continue
         if 1 <= macro_id <= MAX_MACROS:
-            macros.append(
-                {
-                    "id": macro_id,
-                    "label": str(item.get("label", f"MACRO {macro_id}"))[:22],
-                }
-            )
+            entry: dict[str, Any] = {
+                "id": macro_id,
+                "label": str(item.get("label", f"MACRO {macro_id}"))[:22],
+            }
+            if item.get("confirm_hold"):
+                entry["hold"] = True
+            macros.append(entry)
     return {"type": "config", "macros": macros}
 
 

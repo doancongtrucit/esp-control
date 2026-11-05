@@ -31,7 +31,7 @@ YouTube video: https://www.youtube.com/watch?v=16eqHU4j9Fk
 
 ### Touch controls
 
-The default control page contains six buttons:
+The first control page contains six buttons by default (this fork adds two more pages, 18 buttons in total):
 
 | Button | Default action |
 | --- | --- |
@@ -57,7 +57,7 @@ USB serial through CH340
 
 ESP32 display
 - shows live PC statistics
-- shows six touch buttons
+- shows up to 18 touch buttons on three pages
 - sends only a numeric macro ID back to the PC
 ```
 
@@ -92,6 +92,35 @@ https://github.com/lepczynski-cloud/crowpanel-pocket-arcade
 ```
 
 See `docs/HARDWARE.md` for pinout details.
+
+## ESP32-2432S028 "Cheap Yellow Display" (this fork)
+
+This fork adds a PlatformIO environment for the 2.8-inch ESP32-2432S028 board sold with both a USB-C and a micro-USB port. That revision differs from the Elecrow board:
+
+| | Elecrow (`esp32_pc_control_deck`) | CYD 2-USB (`cyd_2usb`) |
+| --- | --- | --- |
+| Display | ILI9341 | ST7789, BGR |
+| TFT MISO | GPIO 4 | GPIO 12 |
+| Backlight | GPIO 27 | GPIO 21 |
+| Touch | XPT2046 on the display SPI bus, 4-corner calibration | XPT2046 on its own bus (CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36), fixed mapping |
+| RGB LED | not used | GPIO 4 / 16 / 17, status light |
+
+Build and flash:
+
+```bash
+pio run -e cyd_2usb
+pio run -e cyd_2usb -t upload --upload-port COMx
+```
+
+Stop the host bridge before flashing; it keeps the serial port open.
+
+Additions in this fork (both environments unless noted):
+
+- **18 buttons on 3 control pages.** The footer has five tabs: `MONITOR`, three macro pages and `INFO`. Macro IDs 1-6 are page 1, 7-12 page 2, 13-18 page 3. Page titles and tab names are in `MACRO_PAGE_TITLES` / `MACRO_PAGE_TABS` in `src/main.cpp`. Empty slots are not drawn.
+- **Hold to confirm.** A macro with `"confirm_hold": true` shows `HOLD` and runs only after the finger stays on it for one second while a bar fills. Use it for actions such as Lock PC.
+- **Gold price page (`INFO`).** The bridge fetches Vietnamese gold prices from `https://www.vang.today/api/prices` every 15 minutes and shows up to six products in thousand VND per chi (1 luong = 10 chi), with the daily change and the world XAU/USD price. Configure the `gold` section in `host/config.json`.
+- **Touch filter** (`cyd_2usb`). A press must reach a minimum pressure and stay still for 40 ms, which removes phantom presses on the resistive panel.
+- **Status LED** (`cyd_2usb`). Blue: waiting for the PC. Green: live data. Red: data older than 15 s. Short cyan flash: button pressed.
 
 ## Repository layout
 
@@ -292,7 +321,7 @@ The prefix prevents ESP32 boot messages from being parsed as application JSON. S
 ## Security notes
 
 - The ESP32 stores no passwords, browser cookies, API keys or account credentials.
-- The ESP32 sends only a macro ID from 1 to 6.
+- The ESP32 sends only a macro ID from 1 to 18.
 - The host bridge executes only actions configured locally in `host/config.json`.
 - Keep `host/config.json` out of Git if it contains local paths or private commands.
 

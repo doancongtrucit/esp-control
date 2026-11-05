@@ -123,8 +123,43 @@ On macOS, `hotkey` and `text` actions may require Accessibility permission for t
 
 See `LINUX_MACOS.md` for the complete platform setup and troubleshooting guide.
 
+## Pages and IDs
+
+The display has three control pages with six buttons each:
+
+| Page | IDs |
+| --- | --- |
+| 1 | 1-6 |
+| 2 | 7-12 |
+| 3 | 13-18 |
+
+IDs without a configured label are left empty on the display.
+
+## Hold to confirm
+
+Add `"confirm_hold": true` to a macro to require a one-second press before it runs:
+
+```json
+{
+  "id": 6,
+  "label": "Lock PC",
+  "action": "command",
+  "confirm_hold": true,
+  "value": {"windows": ["rundll32.exe", "user32.dll,LockWorkStation"]}
+}
+```
+
+## Programs that need administrator rights
+
+Windows refuses to start programs such as Task Manager directly from a normal process (`WinError 740`). Start them through the shell instead:
+
+```json
+"value": {"windows": ["cmd.exe", "/c", "start", "", "taskmgr.exe"]},
+"hidden": true
+```
+
 ## Security boundary
 
-The display cannot submit an arbitrary command string. It can only submit an ID from 1 to 6. The bridge maps that ID to a command already present in the local ignored configuration file.
+The display cannot submit an arbitrary command string. It can only submit an ID from 1 to 18. The bridge maps that ID to a command already present in the local ignored configuration file.
 
 Treat `host/config.json` as executable local configuration and add only actions you trust.

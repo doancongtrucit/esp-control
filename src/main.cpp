@@ -54,15 +54,41 @@ SPIClass touchSpi(VSPI);
 XPT2046_Touchscreen ts(TOUCH_CS_PIN, TOUCH_IRQ);
 #endif
 
+#ifdef DECK_CYD_TOUCH
+// Phantom-touch filter: a press must be firm enough and hold still for a moment.
+constexpr int TOUCH_MIN_Z = 500;
+constexpr uint32_t TOUCH_STABLE_MS = 40;
+constexpr int TOUCH_MAX_JITTER = 150;  // raw units
+#endif
+
 bool readTouch(uint16_t *x, uint16_t *y) {
 #ifdef DECK_CYD_TOUCH
   if (!ts.tirqTouched() || !ts.touched()) return false;
+  const TS_Point first = ts.getPoint();
+  if (first.z < TOUCH_MIN_Z) return false;
+  delay(TOUCH_STABLE_MS);
+  if (!ts.touched()) return false;
   const TS_Point p = ts.getPoint();
+  if (p.z < TOUCH_MIN_Z || abs(p.x - first.x) > TOUCH_MAX_JITTER ||
+      abs(p.y - first.y) > TOUCH_MAX_JITTER) {
+    return false;
+  }
   *x = constrain(map(p.x, TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
   *y = constrain(map(p.y, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, 0, SCREEN_H - 1), 0, SCREEN_H - 1);
   return true;
 #else
   return tft.getTouch(x, y);
+#endif
+}
+
+// True while a finger is still on the panel (used by hold-to-confirm).
+bool touchHeld() {
+#ifdef DECK_CYD_TOUCH
+  return ts.touched();
+#else
+  uint16_t x = 0;
+  uint16_t y = 0;
+  return tft.getTouch(&x, &y);
 #endif
 }
 
@@ -121,6 +147,10 @@ String macroLabels[MACRO_COUNT] = {
     "CLAUDE", "GEMINI", "CHATGPT", "TEAMS", "OUTLOOK", "ZALO",
     "LEAGUE OF LEGENDS", "DISCORD", "WEB", "", "", ""};
 uint8_t macroPage = 0;
+// Buttons flagged "hold" by the bridge must be held for HOLD_CONFIRM_MS (e.g. Lock PC).
+bool macroHold[MACRO_COUNT] = {false};
+constexpr uint32_t HOLD_CONFIRM_MS = 1000;
+uint32_t ledFlashUntil = 0;
 String serialLine;
 uint32_t lastTouchMs = 0;
 bool fullRedrawRequested = true;
@@ -495,6 +525,11 @@ void drawMacroButton(uint8_t id, int x, int y, int w, int h) {
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(C_MUTED, C_PANEL_2);
   tft.drawString(String(id), x + 5, y + 4, 1);
+  if (macroHold[id - 1]) {
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(C_WARN, C_PANEL_2);
+    tft.drawString("HOLD", x + w - 5, y + 4, 1);
+  }
 
   String line1;
   String line2;
@@ -562,21 +597,90 @@ void sendMacro(uint8_t id) {
   sendFrame(doc);
 }
 
-void flashMacro(uint8_t id) {
-  const int index = (id - 1) % MACROS_PER_PAGE;
-  constexpr int gap = 7;
-  constexpr int x0 = 8;
-  constexpr int y0 = 36;
-  constexpr int bw = 96;
-  constexpr int bh = 78;
-  const int col = index % 3;
-  const int row = index / 3;
-  const int x = x0 + col * (bw + gap);
-  const int y = y0 + row * (bh + gap);
+constexpr int MACRO_GAP = 7;
+constexpr int MACRO_X0 = 8;
+constexpr int MACRO_Y0 = 36;
+constexpr int MACRO_BW = 96;
+constexpr int MACRO_BH = 78;
 
-  tft.drawRoundRect(x + 1, y + 1, bw - 2, bh - 2, 7, C_GOOD);
+void macroButtonOrigin(uint8_t id, int &x, int &y) {
+  const int index = (id - 1) % MACROS_PER_PAGE;
+  x = MACRO_X0 + (index % 3) * (MACRO_BW + MACRO_GAP);
+  y = MACRO_Y0 + (index / 3) * (MACRO_BH + MACRO_GAP);
+}
+
+void flashMacro(uint8_t id) {
+  int x = 0;
+  int y = 0;
+  macroButtonOrigin(id, x, y);
+  tft.drawRoundRect(x + 1, y + 1, MACRO_BW - 2, MACRO_BH - 2, 7, C_GOOD);
   delay(60);
-  drawMacroButton(id, x, y, bw, bh);
+  drawMacroButton(id, x, y, MACRO_BW, MACRO_BH);
+}
+
+// Keep the finger on the button for HOLD_CONFIRM_MS; a progress bar fills meanwhile.
+bool holdToConfirm(uint8_t id) {
+  int x = 0;
+  int y = 0;
+  macroButtonOrigin(id, x, y);
+  const int barW = MACRO_BW - 12;
+  const uint32_t start = millis();
+  int misses = 0;
+  while (millis() - start < HOLD_CONFIRM_MS) {
+    misses = touchHeld() ? 0 : misses + 1;
+    if (misses >= 3) {  // released early: cancel
+      drawMacroButton(id, x, y, MACRO_BW, MACRO_BH);
+      return false;
+    }
+    const int filled = barW * (millis() - start) / HOLD_CONFIRM_MS;
+    tft.fillRect(x + 6, y + MACRO_BH - 10, filled, 4, C_WARN);
+    delay(20);
+  }
+  drawMacroButton(id, x, y, MACRO_BW, MACRO_BH);
+  return true;
+}
+
+void waitForRelease(uint32_t timeoutMs = 3000) {
+  const uint32_t start = millis();
+  while (touchHeld() && millis() - start < timeoutMs) delay(10);
+}
+
+// Board RGB LED (active low): blue = waiting for PC, green = live data,
+// red = data stale, cyan flash = button pressed.
+#ifdef DECK_LED_R
+constexpr uint8_t LED_PINS[3] = {DECK_LED_R, DECK_LED_G, DECK_LED_B};
+constexpr uint8_t LED_CHANNEL0 = 4;
+constexpr uint8_t LED_LEVEL = 24;  // dim, out of 255
+
+void setLed(uint8_t r, uint8_t g, uint8_t b) {
+  const uint8_t value[3] = {r, g, b};
+  for (int i = 0; i < 3; ++i) ledcWrite(LED_CHANNEL0 + i, 255 - value[i]);
+}
+
+void setupLed() {
+  for (int i = 0; i < 3; ++i) {
+    ledcSetup(LED_CHANNEL0 + i, 5000, 8);
+    ledcAttachPin(LED_PINS[i], LED_CHANNEL0 + i);
+  }
+  setLed(0, 0, 0);
+}
+#endif
+
+void updateStatusLed() {
+#ifdef DECK_LED_R
+  static uint32_t lastUpdate = 0;
+  if (millis() - lastUpdate < 100) return;
+  lastUpdate = millis();
+  if (static_cast<int32_t>(ledFlashUntil - millis()) > 0) {
+    setLed(0, LED_LEVEL * 4, LED_LEVEL * 4);
+  } else if (!stats.everUpdated) {
+    setLed(0, 0, LED_LEVEL);
+  } else if (millis() - stats.lastUpdateMs > STALE_AFTER_MS) {
+    setLed(LED_LEVEL, 0, 0);
+  } else {
+    setLed(0, LED_LEVEL, 0);
+  }
+#endif
 }
 
 void handleTouch() {
@@ -602,20 +706,20 @@ void handleTouch() {
 
   if (page != Page::Macros || y < 36 || y >= 199) return;
 
-  constexpr int gap = 7;
-  constexpr int x0 = 8;
-  constexpr int y0 = 36;
-  constexpr int bw = 96;
-  constexpr int bh = 78;
-
   for (int i = 0; i < MACROS_PER_PAGE; ++i) {
     const uint8_t id = macroPage * MACROS_PER_PAGE + i + 1;
-    const int col = i % 3;
-    const int row = i / 3;
-    const int bx = x0 + col * (bw + gap);
-    const int by = y0 + row * (bh + gap);
-    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+    int bx = 0;
+    int by = 0;
+    macroButtonOrigin(id, bx, by);
+    if (x >= bx && x < bx + MACRO_BW && y >= by && y < by + MACRO_BH) {
       if (macroLabels[id - 1].length() == 0) return;
+      if (macroHold[id - 1]) {
+        const bool confirmed = holdToConfirm(id);
+        waitForRelease();
+        lastTouchMs = millis();
+        if (!confirmed) return;
+      }
+      ledFlashUntil = millis() + 150;
       flashMacro(id);
       sendMacro(id);
       return;
@@ -676,16 +780,25 @@ void handleStats(JsonDocument &doc) {
 void handleConfig(JsonDocument &doc) {
   JsonArrayConst macros = doc["macros"].as<JsonArrayConst>();
   bool labelsChanged = false;
+  bool nextHold[MACRO_COUNT] = {false};
 
   for (JsonObjectConst item : macros) {
     const int id = item["id"] | 0;
     const char *label = item["label"] | "";
     if (id < 1 || id > MACRO_COUNT || !label || label[0] == '\0') continue;
+    nextHold[id - 1] = item["hold"] | false;
 
     String next(label);
     if (next.length() > 22) next = next.substring(0, 22);
     if (macroLabels[id - 1] != next) {
       macroLabels[id - 1] = next;
+      labelsChanged = true;
+    }
+  }
+
+  for (int i = 0; i < MACRO_COUNT; ++i) {
+    if (macroHold[i] != nextHold[i]) {
+      macroHold[i] = nextHold[i];
       labelsChanged = true;
     }
   }
@@ -815,6 +928,9 @@ void setup() {
 
   pinMode(BACKLIGHT_PIN, OUTPUT);
   digitalWrite(BACKLIGHT_PIN, HIGH);
+#ifdef DECK_LED_R
+  setupLed();
+#endif
 
   tft.init();
   tft.setRotation(1);
@@ -832,6 +948,7 @@ void setup() {
 void loop() {
   pollSerial();
   handleTouch();
+  updateStatusLed();
 
   if (fullRedrawRequested) {
     renderFull();

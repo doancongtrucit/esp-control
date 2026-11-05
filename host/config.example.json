@@ -27,9 +27,18 @@
       "health_url": "http://127.0.0.1:11434/api/tags",
       "hidden": true,
       "value": {
-        "windows": ["ollama", "serve"],
-        "linux": ["ollama", "serve"],
-        "macos": ["ollama", "serve"]
+        "windows": [
+          "ollama",
+          "serve"
+        ],
+        "linux": [
+          "ollama",
+          "serve"
+        ],
+        "macos": [
+          "ollama",
+          "serve"
+        ]
       }
     },
     {
@@ -38,7 +47,11 @@
       "action": "command",
       "new_console": true,
       "value": {
-        "windows": ["cmd.exe", "/c", "C:\\Path\\To\\START_VOICE_SERVER.cmd"],
+        "windows": [
+          "cmd.exe",
+          "/c",
+          "C:\\Path\\To\\START_VOICE_SERVER.cmd"
+        ],
         "linux": null,
         "macos": null
       },
@@ -53,9 +66,17 @@
       "label": "Terminal",
       "action": "command",
       "value": {
-        "windows": ["wt.exe"],
-        "linux": ["x-terminal-emulator"],
-        "macos": ["open", "-a", "Terminal"]
+        "windows": [
+          "wt.exe"
+        ],
+        "linux": [
+          "x-terminal-emulator"
+        ],
+        "macos": [
+          "open",
+          "-a",
+          "Terminal"
+        ]
       }
     },
     {
@@ -63,9 +84,17 @@
       "label": "Task Manager",
       "action": "command",
       "value": {
-        "windows": ["taskmgr.exe"],
-        "linux": ["gnome-system-monitor"],
-        "macos": ["open", "-a", "Activity Monitor"]
+        "windows": [
+          "taskmgr.exe"
+        ],
+        "linux": [
+          "gnome-system-monitor"
+        ],
+        "macos": [
+          "open",
+          "-a",
+          "Activity Monitor"
+        ]
       }
     },
     {
@@ -73,10 +102,51 @@
       "label": "Lock PC",
       "action": "command",
       "value": {
-        "windows": ["rundll32.exe", "user32.dll,LockWorkStation"],
-        "linux": ["loginctl", "lock-session"],
-        "macos": ["pmset", "displaysleepnow"]
-      }
+        "windows": [
+          "rundll32.exe",
+          "user32.dll,LockWorkStation"
+        ],
+        "linux": [
+          "loginctl",
+          "lock-session"
+        ],
+        "macos": [
+          "pmset",
+          "displaysleepnow"
+        ]
+      },
+      "confirm_hold": true
     }
-  ]
+  ],
+  "gold": {
+    "enabled": true,
+    "refresh_minutes": 15,
+    "url": "https://www.vang.today/api/prices",
+    "items": [
+      [
+        "SJL1L10",
+        "SJC mieng"
+      ],
+      [
+        "SJ9999",
+        "Nhan SJC"
+      ],
+      [
+        "DOHNL",
+        "DOJI HN"
+      ],
+      [
+        "PQHN24NTT",
+        "PNJ 24K"
+      ],
+      [
+        "BTSJC",
+        "Bao Tin SJC"
+      ],
+      [
+        "BT9999NTT",
+        "Bao Tin 9999"
+      ]
+    ]
+  }
 }

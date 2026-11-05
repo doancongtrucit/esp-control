@@ -12,7 +12,7 @@ ESP32 PC Control Deck is intentionally local-first:
 
 ## Action execution
 
-The ESP32 sends only a numeric macro ID from 1 to 6. It does not send a command path or arbitrary shell text.
+The ESP32 sends only a numeric macro ID from 1 to 18. It does not send a command path or arbitrary shell text.
 
 The host bridge maps the ID to an action in the local `host/config.json` file. That file can open URLs, execute commands, start services, type text, and send hotkeys.
 
