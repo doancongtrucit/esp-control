@@ -16,8 +16,11 @@ import json
 import math
 import os
 import platform
+import queue
 import re
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -46,6 +49,8 @@ PROTOCOL_PREFIX = "DD:"
 PROTOCOL_VERSION = 3
 # 3 pages x 6 buttons on the display (firmware MACRO_COUNT).
 MAX_MACROS = 18
+# Icon colors the UI v3 Controls screen knows (firmware MACRO_GRADIENTS).
+MACRO_COLORS = {"green", "blue", "orange", "purple", "pink", "teal", "gray", "indigo", "yellow"}
 CH340_VIDS = {0x1A86}
 LOG_FILE: Path | None = None
 
@@ -662,6 +667,7 @@ def get_stats(
         ),
         "clock": now.strftime("%H:%M"),
         "clock_seconds": clock_seconds,
+        "date": now.date().isoformat(),
     }
     return payload, current
 
@@ -680,8 +686,134 @@ def macro_packet(config: dict[str, Any]) -> dict[str, Any]:
             }
             if item.get("confirm_hold"):
                 entry["hold"] = True
+            if item.get("icon"):
+                entry["icon"] = str(item["icon"])[:16]
+            if item.get("color") in MACRO_COLORS:
+                entry["color"] = item["color"]
             macros.append(entry)
     return {"type": "config", "macros": macros}
+
+
+NOTIFY_TEXT_LIMIT = 120
+
+
+def notify_packet(app: str, sender: str, body: str, source: str = "pc") -> dict[str, Any]:
+    """USB frame that shows a notification on the device (UI v2)."""
+    return {
+        "type": "notify",
+        "src": source,
+        "app": str(app)[:NOTIFY_TEXT_LIMIT],
+        "from": str(sender)[:NOTIFY_TEXT_LIMIT],
+        "body": str(body)[:NOTIFY_TEXT_LIMIT],
+    }
+
+
+DEFAULT_NOTIFY_PORT = 4210
+NOTIFY_TOKEN_BYTES = 18  # token_urlsafe(18) -> 24 characters
+
+
+def notify_settings(config: dict[str, Any]) -> dict[str, Any]:
+    return config.get("notifications") or {}
+
+
+def ensure_notify_token(config: dict[str, Any], path: Path) -> str:
+    """Returns the UDP token, generating it and saving config.json once if empty."""
+    settings = config.setdefault("notifications", {})
+    token = str(settings.get("token") or "")
+    if not token:
+        token = secrets.token_urlsafe(NOTIFY_TOKEN_BYTES)
+        settings["token"] = token
+        path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return token
+
+
+def wifi_packet(config: dict[str, Any]) -> dict[str, Any] | None:
+    """USB frame that provisions the device's Wi-Fi, or None when not configured."""
+    wifi = config.get("wifi") or {}
+    if not wifi.get("ssid"):
+        return None
+    settings = notify_settings(config)
+    return {
+        "type": "wifi",
+        "ssid": str(wifi["ssid"]),
+        "pass": str(wifi.get("password", "")),
+        "token": str(settings.get("token", "")),
+        "port": int(settings.get("udp_port", DEFAULT_NOTIFY_PORT)),
+    }
+
+
+UDP_NOTIFY_MAX_BYTES = 1024  # device limit (net_notify.h UDP_NOTIFY_MAX)
+UDP_FIELD_LIMITS = {"app": 24, "from": 40}  # the device shows 12 / 24 characters anyway
+
+
+def send_udp_notify(host: str, port: int, token: str, app: str, sender: str, body: str) -> None:
+    packet = notify_packet(app, sender, body)
+    payload = {
+        "token": token,
+        "app": packet["app"][: UDP_FIELD_LIMITS["app"]],
+        "from": packet["from"][: UDP_FIELD_LIMITS["from"]],
+        "body": packet["body"],
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    while len(data) > UDP_NOTIFY_MAX_BYTES and payload["body"]:
+        payload["body"] = payload["body"][:-10]
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(data, (host, port))
+    finally:
+        sock.close()
+
+
+def send_wifi_provisioning(serial_port: serial.Serial, config: dict[str, Any]) -> None:
+    packet = wifi_packet(config)
+    if packet is not None:
+        send_json(serial_port, packet)
+
+
+def start_pc_notifications(config: dict[str, Any]) -> "queue.Queue[tuple[str, str, str]]":
+    """Starts the Windows toast watcher; toasts arrive on the returned queue."""
+    toasts: "queue.Queue[tuple[str, str, str]]" = queue.Queue(maxsize=50)
+    if not notify_settings(config).get("enabled", True) or platform.system() != "Windows":
+        return toasts
+    try:
+        from pc_notifications import PcNotificationWatcher
+    except Exception as exc:
+        log(f"PC notifications disabled: {type(exc).__name__}")
+        return toasts
+
+    def on_toast(app: str, sender: str, body: str) -> None:
+        try:
+            toasts.put_nowait((app, sender, body))
+        except queue.Full:
+            pass
+
+    PcNotificationWatcher(on_toast, log=log).start()
+    return toasts
+
+
+def forward_pc_toasts(
+    toasts: "queue.Queue[tuple[str, str, str]]",
+    serial_port: serial.Serial,
+    device_wifi: tuple[str, int] | None,
+    config: dict[str, Any],
+) -> None:
+    """Sends queued PC toasts over Wi-Fi when the device reported an IP, else over USB."""
+    token = str(notify_settings(config).get("token", ""))
+    while True:
+        try:
+            app, sender, body = toasts.get_nowait()
+        except queue.Empty:
+            return
+        if device_wifi is not None and token:
+            try:
+                send_udp_notify(device_wifi[0], device_wifi[1], token, app, sender, body)
+                log("Forwarded a PC notification over Wi-Fi")
+                continue
+            except OSError as exc:
+                log(f"Wi-Fi send failed ({type(exc).__name__}); using USB")
+        send_json(serial_port, notify_packet(app, sender, body))
+        log("Forwarded a PC notification over USB")
 
 
 def keyboard_key(token: str):
@@ -972,6 +1104,11 @@ def run(config: dict[str, Any]) -> None:
     lhm = build_lhm_reader(config)
     info_feed = InfoFeed(config)
     info_feed.start()
+    from info_feeds import InfoFeeds
+
+    feeds = InfoFeeds(config, log=log)
+    feeds.start()
+    toasts = start_pc_notifications(config)
 
     psutil.cpu_percent(interval=None)
     previous = current_counters()
@@ -1012,8 +1149,11 @@ def run(config: dict[str, Any]) -> None:
                 serial_port.reset_output_buffer()
 
                 send_json(serial_port, macro_packet(config))
+                send_wifi_provisioning(serial_port, config)
                 last_send = 0.0
                 sent_info_version = -1
+                sent_feed_versions: dict[str, int] = {}
+                device_wifi: tuple[str, int] | None = None
                 receive_buffer = bytearray()
 
                 while True:
@@ -1027,6 +1167,13 @@ def run(config: dict[str, Any]) -> None:
                     if info_packet is not None and info_version != sent_info_version:
                         send_json(serial_port, info_packet)
                         sent_info_version = info_version
+
+                    for kind, (version, frame) in feeds.snapshot().items():
+                        if sent_feed_versions.get(kind) != version:
+                            send_json(serial_port, frame)
+                            sent_feed_versions[kind] = version
+
+                    forward_pc_toasts(toasts, serial_port, device_wifi, config)
 
                     chunk = serial_port.read(256)
                     if chunk:
@@ -1058,7 +1205,17 @@ def run(config: dict[str, Any]) -> None:
                                         f"!= device protocol {protocol}"
                                     )
                                 send_json(serial_port, macro_packet(config))
+                                send_wifi_provisioning(serial_port, config)
                                 sent_info_version = -1  # device rebooted: resend INFO
+                                sent_feed_versions.clear()
+                                device_wifi = None
+                            elif message_type == "wifi_status":
+                                if message.get("connected") and message.get("ip"):
+                                    device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
+                                    log("Device Wi-Fi connected; PC notifications go over Wi-Fi")
+                                else:
+                                    device_wifi = None
+                                    log("Device Wi-Fi not connected; PC notifications go over USB")
                             elif message_type == "error":
                                 log(
                                     f"ESP protocol error: {message.get('code', 'unknown')} "
@@ -1120,6 +1277,8 @@ def main() -> None:
         raise SystemExit(2)
 
     config = load_config(config_path)
+    if notify_settings(config).get("enabled", True):
+        ensure_notify_token(config, config_path)
 
     global LOG_FILE
     log_name = str(config.get("log_file", "control-deck.log") or "").strip()

@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] - CYD fork
+
+### Added
+
+- `cyd_2usb` environment for the ESP32-2432S028 (USB-C + micro-USB, ST7789) with its separate XPT2046 touch bus.
+- 18 macros on three pages, hold-to-confirm, per-macro icons, gold price page (vang.today, thousand VND per chi).
+- UI v2 on `cyd_2usb`: Home grid, header Home button, Agentic light theme, English labels.
+- Notifications on `cyd_2usb`: iPhone over BLE (ANCS), Windows toasts over Wi-Fi (UDP with a shared token) or USB; Vietnamese text kept with diacritics.
+- Touch filter and RGB status LED on `cyd_2usb`.
+- UI v3 on `cyd_2usb`: dark launcher with gradient app icons and status bar, gradient Controls icons with per-macro colors.
+- Info screen with Gold, Coin (CoinGecko), Stock (VPS), Weather (Open-Meteo) and Calendar tabs; Vietnamese lunar calendar on the device.
+
 ## [0.4.0] - 2026-10-01
 
 ### Added

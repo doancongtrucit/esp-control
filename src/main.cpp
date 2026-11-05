@@ -1,3 +1,5 @@
+// The app entry point is left out of on-device unit test builds (test_build_src = yes).
+#ifndef PIO_UNIT_TESTING
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -6,6 +8,18 @@
 #ifdef DECK_CYD_TOUCH
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
+#endif
+#ifdef DECK_UI_V2
+#include "ancs.h"
+#include "color_util.h"
+#include "format_util.h"
+#include "icons.h"
+#include "lunar.h"
+#include "net_notify.h"
+#include "notify_store.h"
+#include "text_vi.h"
+#include "theme.h"
+#include "ui_layout.h"
 #endif
 
 namespace {
@@ -118,6 +132,9 @@ struct Stats {
   uint32_t lastUpdateMs = 0;
   bool clockValid = false;
   bool everUpdated = false;
+  int dateDay = 0;  // PC local date from the stats frame; 0 = unknown
+  int dateMonth = 0;
+  int dateYear = 0;
 } stats;
 
 // INFO page data (gold prices, thousand VND per chi), sent by the host bridge
@@ -151,6 +168,94 @@ uint8_t macroPage = 0;
 bool macroHold[MACRO_COUNT] = {false};
 constexpr uint32_t HOLD_CONFIRM_MS = 1000;
 uint32_t ledFlashUntil = 0;
+#ifdef DECK_UI_V2
+Icon macroIcon[MACRO_COUNT];  // set from the bridge's config frame; Controls until then
+// Controls icon gradients, indexed by the bridge's "color" names (MACRO_COLORS).
+struct MacroGradient {
+  const char *name;
+  uint32_t from;
+  uint32_t to;
+};
+constexpr MacroGradient MACRO_GRADIENTS[] = {
+    {"green", 0x30d158, 0x1a9e48}, {"blue", 0x0a84ff, 0x0060df},   {"orange", 0xff9f0a, 0xff6b1a},
+    {"purple", 0xbf5af2, 0x8e44ec}, {"pink", 0xff375f, 0xe0244a},  {"teal", 0x64d2ff, 0x2b8fd8},
+    {"gray", 0x8e8e93, 0x5c5c63},  {"indigo", 0x5e5ce6, 0x3a37b8}, {"yellow", 0xffd60a, 0xf5a300},
+};
+int8_t macroColor[MACRO_COUNT];  // index into MACRO_GRADIENTS, -1 = page default
+
+// Info tab feeds from the bridge (coin, stock, weather frames).
+struct CoinRow {
+  char symbol[6];
+  char name[11];
+  float price;
+  float change;
+};
+struct CoinData {
+  bool has = false;
+  uint8_t count = 0;
+  CoinRow rows[5];
+  char time[6] = "";
+} coins;
+
+struct QuoteRow {
+  char name[11];
+  float value;
+  float change;
+};
+constexpr uint8_t SPARK_MAX = 40;
+struct StockData {
+  bool has = false;
+  uint8_t indexCount = 0;
+  QuoteRow index[3];
+  uint8_t itemCount = 0;
+  QuoteRow items[4];
+  uint8_t sparkCount = 0;
+  float spark[SPARK_MAX];
+  float open = 0;
+  char time[6] = "";
+} stocks;
+
+struct ForecastDay {
+  char day[4];
+  int8_t hi;
+  int8_t lo;
+  int8_t rain;  // -1 = unknown
+  uint8_t icon;
+};
+struct WeatherData {
+  bool has = false;
+  char city[17] = "";
+  float temp = NAN;
+  int feels = 0;
+  int humidity = 0;
+  int wind = 0;
+  uint8_t icon = 2;
+  char desc[16] = "";
+  uint8_t dayCount = 0;
+  ForecastDay days[4];
+  char time[6] = "";
+} weather;
+
+int8_t macroColorFromName(const char *name) {
+  if (name == nullptr) return -1;
+  for (size_t i = 0; i < sizeof(MACRO_GRADIENTS) / sizeof(MACRO_GRADIENTS[0]); ++i) {
+    if (strcmp(MACRO_GRADIENTS[i].name, name) == 0) return static_cast<int8_t>(i);
+  }
+  return -1;
+}
+NotifyStore notifyStore;
+uint32_t notifyFlashUntil = 0;
+bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
+bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
+void uiRenderFullV2();
+void uiNotificationArrived();
+void uiRenderDynamicV2();
+void uiHandleTouchV2(uint16_t x, uint16_t y);
+void uiConfigChanged();
+void uiGoldChanged();
+void uiInfoFeedChanged(uint8_t tab);
+void uiLinksChanged();
+#endif
 String serialLine;
 uint32_t lastTouchMs = 0;
 bool fullRedrawRequested = true;
@@ -567,6 +672,12 @@ void drawMacrosFull() {
 }
 
 void renderFull() {
+#ifdef DECK_UI_V2
+  uiRenderFullV2();
+  fullRedrawRequested = false;
+  statsDirty = false;
+  return;
+#endif
   if (page == Page::Monitor) {
     drawMonitorFull();
   } else if (page == Page::Info) {
@@ -671,6 +782,12 @@ void updateStatusLed() {
   static uint32_t lastUpdate = 0;
   if (millis() - lastUpdate < 100) return;
   lastUpdate = millis();
+#ifdef DECK_UI_V2
+  if (static_cast<int32_t>(notifyFlashUntil - millis()) > 0) {
+    setLed(0, 0, LED_LEVEL * 6);
+    return;
+  }
+#endif
   if (static_cast<int32_t>(ledFlashUntil - millis()) > 0) {
     setLed(0, LED_LEVEL * 4, LED_LEVEL * 4);
   } else if (!stats.everUpdated) {
@@ -683,6 +800,10 @@ void updateStatusLed() {
 #endif
 }
 
+#ifdef DECK_UI_V2
+#include "ui_v2_screens.h"
+#endif
+
 void handleTouch() {
   if (millis() - lastTouchMs < TOUCH_DEBOUNCE_MS) return;
 
@@ -690,6 +811,10 @@ void handleTouch() {
   uint16_t y = 0;
   if (!readTouch(&x, &y)) return;
   lastTouchMs = millis();
+#ifdef DECK_UI_V2
+  uiHandleTouchV2(x, y);
+  return;
+#endif
 
   if (y >= FOOTER_Y) {
     const int tab = min(x / FOOTER_TAB_W, FOOTER_TABS - 1);
@@ -733,6 +858,14 @@ float readFloat(JsonVariantConst value, float fallback = NAN) {
 }
 
 void syncClock(JsonDocument &doc) {
+  int y = 0, m = 0, d = 0;
+  const char *date = doc["date"] | "";
+  if (sscanf(date, "%4d-%2d-%2d", &y, &m, &d) == 3 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+    stats.dateYear = y;
+    stats.dateMonth = m;
+    stats.dateDay = d;
+  }
+
   if (!doc["clock_seconds"].isNull()) {
     const int32_t seconds = doc["clock_seconds"].as<int32_t>();
     if (seconds >= 0 && seconds < 86400) {
@@ -787,6 +920,18 @@ void handleConfig(JsonDocument &doc) {
     const char *label = item["label"] | "";
     if (id < 1 || id > MACRO_COUNT || !label || label[0] == '\0') continue;
     nextHold[id - 1] = item["hold"] | false;
+#ifdef DECK_UI_V2
+    const Icon icon = iconFromName(item["icon"] | static_cast<const char *>(nullptr));
+    if (macroIcon[id - 1] != icon) {
+      macroIcon[id - 1] = icon;
+      labelsChanged = true;
+    }
+    const int8_t color = macroColorFromName(item["color"] | static_cast<const char *>(nullptr));
+    if (macroColor[id - 1] != color) {
+      macroColor[id - 1] = color;
+      labelsChanged = true;
+    }
+#endif
 
     String next(label);
     if (next.length() > 22) next = next.substring(0, 22);
@@ -803,9 +948,13 @@ void handleConfig(JsonDocument &doc) {
     }
   }
 
+#ifdef DECK_UI_V2
+  if (labelsChanged) uiConfigChanged();
+#else
   if (labelsChanged && page == Page::Macros) {
     fullRedrawRequested = true;
   }
+#endif
 }
 
 void handleInfo(JsonDocument &doc) {
@@ -826,8 +975,142 @@ void handleInfo(JsonDocument &doc) {
     info.xauChange = readFloat(gold["xauc"], 0.0f);
   }
 
+#ifdef DECK_UI_V2
+  uiGoldChanged();
+#else
   if (page == Page::Info) fullRedrawRequested = true;
+#endif
 }
+
+#ifdef DECK_UI_V2
+// Adds a notification from any source and alerts the user (banner + blue LED).
+void addNotification(NotifySource source, const String &app, const String &from, const String &body) {
+  notifyStore.add(source, app, from, body, millis());
+  notifyFlashUntil = millis() + 300;
+  uiNotificationArrived();
+}
+
+void copyText(char *dest, size_t size, JsonVariantConst value) {
+  strlcpy(dest, value | "", size);
+}
+
+void handleCoin(JsonDocument &doc) {
+  coins.count = 0;
+  for (JsonObjectConst item : doc["items"].as<JsonArrayConst>()) {
+    if (coins.count >= 5) break;
+    CoinRow &row = coins.rows[coins.count++];
+    copyText(row.symbol, sizeof(row.symbol), item["s"]);
+    copyText(row.name, sizeof(row.name), item["n"]);
+    row.price = readFloat(item["p"], 0.0f);
+    row.change = readFloat(item["c"], 0.0f);
+  }
+  copyText(coins.time, sizeof(coins.time), doc["time"]);
+  coins.has = true;
+  uiInfoFeedChanged(1);
+}
+
+uint8_t readQuotes(JsonArrayConst list, QuoteRow *rows, uint8_t capacity, const char *valueKey) {
+  uint8_t count = 0;
+  for (JsonObjectConst item : list) {
+    if (count >= capacity) break;
+    QuoteRow &row = rows[count++];
+    copyText(row.name, sizeof(row.name), item["n"]);
+    row.value = readFloat(item[valueKey], 0.0f);
+    row.change = readFloat(item["c"], 0.0f);
+  }
+  return count;
+}
+
+void handleStock(JsonDocument &doc) {
+  stocks.indexCount = readQuotes(doc["index"].as<JsonArrayConst>(), stocks.index, 3, "v");
+  stocks.itemCount = readQuotes(doc["items"].as<JsonArrayConst>(), stocks.items, 4, "p");
+  stocks.sparkCount = 0;
+  for (JsonVariantConst point : doc["spark"].as<JsonArrayConst>()) {
+    if (stocks.sparkCount >= SPARK_MAX) break;
+    stocks.spark[stocks.sparkCount++] = point.as<float>();
+  }
+  stocks.open = readFloat(doc["open"], 0.0f);
+  copyText(stocks.time, sizeof(stocks.time), doc["time"]);
+  stocks.has = true;
+  uiInfoFeedChanged(2);
+}
+
+void handleWeather(JsonDocument &doc) {
+  copyText(weather.city, sizeof(weather.city), doc["city"]);
+  weather.temp = readFloat(doc["t"]);
+  weather.feels = doc["f"] | 0;
+  weather.humidity = doc["h"] | 0;
+  weather.wind = doc["wind"] | 0;
+  weather.icon = doc["icon"] | 2;
+  copyText(weather.desc, sizeof(weather.desc), doc["desc"]);
+  weather.dayCount = 0;
+  for (JsonObjectConst item : doc["days"].as<JsonArrayConst>()) {
+    if (weather.dayCount >= 4) break;
+    ForecastDay &day = weather.days[weather.dayCount++];
+    copyText(day.day, sizeof(day.day), item["d"]);
+    day.hi = item["hi"] | 0;
+    day.lo = item["lo"] | 0;
+    day.rain = item["rain"] | -1;
+    day.icon = item["icon"] | 2;
+  }
+  copyText(weather.time, sizeof(weather.time), doc["time"]);
+  weather.has = true;
+  uiInfoFeedChanged(3);
+}
+
+void handleNotify(JsonDocument &doc) {
+  const char *src = doc["src"] | "pc";
+  addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
+                  doc["app"] | "", doc["from"] | "", doc["body"] | "");
+}
+
+void onPhoneNotification(const String &app, const String &title, const String &message) {
+  addNotification(NotifySource::Phone, app, title, message);
+}
+
+// Mirrors the iPhone link into the UI; reports it (with free heap) to the bridge log.
+void updatePhoneLink() {
+  if (phoneLinkUp == ancsReady()) return;
+  phoneLinkUp = ancsReady();
+  uiLinksChanged();
+  JsonDocument doc;
+  doc["type"] = "ancs";
+  doc["ready"] = phoneLinkUp;
+  doc["heap"] = ESP.getFreeHeap();
+  sendFrame(doc);
+}
+
+void onPcNotification(const String &app, const String &from, const String &body) {
+  addNotification(NotifySource::Pc, app, from, body);
+}
+
+void sendWifiStatus() {
+  JsonDocument doc;
+  doc["type"] = "wifi_status";
+  doc["connected"] = netConnected();
+  doc["ip"] = netIp();
+  doc["port"] = netPort();
+  sendFrame(doc);
+}
+
+// Wi-Fi credentials and the UDP token come from the bridge's local config.
+void handleWifi(JsonDocument &doc) {
+  WifiSettings settings;
+  settings.ssid = doc["ssid"] | "";
+  settings.pass = doc["pass"] | "";
+  settings.token = doc["token"] | "";
+  settings.port = doc["port"] | 4210;
+  netConfigure(settings);
+  sendWifiStatus();
+}
+
+void updatePcLink() {
+  if (pcLinkUp == netConnected()) return;
+  pcLinkUp = netConnected();
+  uiLinksChanged();
+  sendWifiStatus();
+}
+#endif
 
 void processSerialLine(const String &line) {
   bool framed = false;
@@ -862,6 +1145,18 @@ void processSerialLine(const String &line) {
     handleConfig(doc);
   } else if (strcmp(type, "info") == 0) {
     handleInfo(doc);
+#ifdef DECK_UI_V2
+  } else if (strcmp(type, "coin") == 0) {
+    handleCoin(doc);
+  } else if (strcmp(type, "stock") == 0) {
+    handleStock(doc);
+  } else if (strcmp(type, "weather") == 0) {
+    handleWeather(doc);
+  } else if (strcmp(type, "notify") == 0) {
+    handleNotify(doc);
+  } else if (strcmp(type, "wifi") == 0) {
+    handleWifi(doc);
+#endif
   } else if (strcmp(type, "ping") == 0) {
     sendSimpleFrame("pong");
   } else if (strcmp(type, "recalibrate") == 0) {
@@ -923,6 +1218,8 @@ void setupTouchCalibration() {
 }  // namespace
 
 void setup() {
+  // Feed frames are up to ~1.5 KB; the default 256 B RX buffer overflows during long redraws.
+  Serial.setRxBufferSize(2048);
   Serial.begin(SERIAL_BAUD);
   serialLine.reserve(2048);
 
@@ -932,6 +1229,10 @@ void setup() {
   setupLed();
 #endif
 
+#ifdef DECK_UI_V2
+  for (Icon &icon : macroIcon) icon = Icon::Controls;
+  for (int8_t &color : macroColor) color = -1;
+#endif
   tft.init();
   tft.setRotation(1);
   setupTouchCalibration();
@@ -943,29 +1244,48 @@ void setup() {
   hello["firmware"] = "0.3.3";
   hello["protocol"] = PROTOCOL_VERSION;
   sendFrame(hello);
+#ifdef DECK_UI_V2
+  ancsBegin("ESP32 Deck", onPhoneNotification);
+  netBegin(onPcNotification);
+#endif
 }
 
 void loop() {
   pollSerial();
   handleTouch();
   updateStatusLed();
+#ifdef DECK_UI_V2
+  ancsLoop();
+  updatePhoneLink();
+  netLoop();
+  updatePcLink();
+#endif
 
   if (fullRedrawRequested) {
     renderFull();
   } else if (statsDirty) {
+#ifdef DECK_UI_V2
+    uiRenderDynamicV2();
+#else
     if (page == Page::Monitor) {
       drawMonitorDynamic();
     } else {
       drawHeaderDynamic();
     }
+#endif
     statsDirty = false;
   }
 
   static uint32_t lastHeaderRefresh = 0;
   if (millis() - lastHeaderRefresh >= 1000) {
     lastHeaderRefresh = millis();
+#ifdef DECK_UI_V2
+    uiRenderDynamicV2();
+#else
     drawHeaderDynamic();
+#endif
   }
 
   delay(8);
 }
+#endif  // PIO_UNIT_TESTING

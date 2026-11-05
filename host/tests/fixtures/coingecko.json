@@ -1,0 +1,22 @@
+{
+ "bitcoin": {
+  "usd": 76032,
+  "usd_24h_change": -5.318427069243892
+ },
+ "ethereum": {
+  "usd": 2253.68,
+  "usd_24h_change": -7.064415672823953
+ },
+ "binancecoin": {
+  "usd": 691.46,
+  "usd_24h_change": -3.3942917354565014
+ },
+ "solana": {
+  "usd": 89.81,
+  "usd_24h_change": -6.384791831649811
+ },
+ "ripple": {
+  "usd": 1.24,
+  "usd_24h_change": -5.460762412693592
+ }
+}

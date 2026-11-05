@@ -18,7 +18,8 @@
       "id": 1,
       "label": "ChatGPT",
       "action": "url",
-      "value": "https://chatgpt.com/"
+      "value": "https://chatgpt.com/",
+      "icon": "chat"
     },
     {
       "id": 2,
@@ -39,7 +40,8 @@
           "ollama",
           "serve"
         ]
-      }
+      },
+      "icon": "chip"
     },
     {
       "id": 3,
@@ -59,7 +61,8 @@
         "windows": "C:\\Path\\To",
         "linux": null,
         "macos": null
-      }
+      },
+      "icon": "headset"
     },
     {
       "id": 4,
@@ -77,7 +80,8 @@
           "-a",
           "Terminal"
         ]
-      }
+      },
+      "icon": "controls"
     },
     {
       "id": 5,
@@ -95,7 +99,8 @@
           "-a",
           "Activity Monitor"
         ]
-      }
+      },
+      "icon": "activity"
     },
     {
       "id": 6,
@@ -115,7 +120,8 @@
           "displaysleepnow"
         ]
       },
-      "confirm_hold": true
+      "confirm_hold": true,
+      "icon": "lock"
     }
   ],
   "gold": {
@@ -125,15 +131,15 @@
     "items": [
       [
         "SJL1L10",
-        "SJC mieng"
+        "SJC bar"
       ],
       [
         "SJ9999",
-        "Nhan SJC"
+        "SJC ring"
       ],
       [
         "DOHNL",
-        "DOJI HN"
+        "DOJI Hanoi"
       ],
       [
         "PQHN24NTT",
@@ -148,5 +154,30 @@
         "Bao Tin 9999"
       ]
     ]
+  },
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "notifications": {
+    "enabled": true,
+    "udp_port": 4210,
+    "token": ""
+  },
+  "coins": [
+    "bitcoin",
+    "ethereum",
+    "binancecoin",
+    "solana",
+    "ripple"
+  ],
+  "stocks": [
+    "VNM",
+    "HPG"
+  ],
+  "weather": {
+    "city": "Da Nang",
+    "latitude": 16.0544,
+    "longitude": 108.2022
   }
 }

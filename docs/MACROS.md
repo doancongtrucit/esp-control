@@ -135,6 +135,18 @@ The display has three control pages with six buttons each:
 
 IDs without a configured label are left empty on the display.
 
+## Icons (`cyd_2usb`)
+
+Add `"icon"` to a macro to choose the picture above its label on the Controls screen. Names (case-insensitive): `activity`, `download`, `lock`, `screenshot`, `globe`, `sliders`, `sparkle`, `gem`, `chat`, `users`, `mail`, `bubble`, `gamepad`, `headset`, `bars`, `voldown`, `mute`, `volup`, `phone`, `wifi`, `bell`, `gear`, `chip`, `clipboard`, `gold`, `monitor`, `controls`, `plus`, `home`. Unknown or missing names show the `controls` icon.
+
+```json
+{"id": 3, "label": "LOCK PC", "icon": "lock", "confirm_hold": true, "action": "command", "value": {"windows": ["rundll32.exe", "user32.dll,LockWorkStation"]}}
+```
+
+Short labels fit best (about 11 characters per line, two lines).
+
+Add `"color"` to choose the icon gradient: `green`, `blue`, `orange`, `purple`, `pink`, `teal`, `gray`, `indigo` or `yellow`. Without it, page 1 is blue, page 2 purple and page 3 gray.
+
 ## Hold to confirm
 
 Add `"confirm_hold": true` to a macro to require a one-second press before it runs:

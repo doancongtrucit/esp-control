@@ -149,6 +149,150 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(macros[1]["hold"])
         self.assertNotIn("hold", macros[0])
 
+    def test_macro_packet_passes_known_colors_only(self):
+        config = {"macros": [
+            {"id": 1, "label": "A", "color": "green"},
+            {"id": 2, "label": "B", "color": "chartreuse"},
+            {"id": 3, "label": "C"},
+        ]}
+        macros = bridge.macro_packet(config)["macros"]
+        self.assertEqual("green", macros[0]["color"])
+        self.assertNotIn("color", macros[1])
+        self.assertNotIn("color", macros[2])
+
+    def test_macro_packet_passes_icon_names(self):
+        config = {"macros": [{"id": 1, "label": "LOCK PC", "icon": "lock"}, {"id": 2, "label": "X"}]}
+        macros = bridge.macro_packet(config)["macros"]
+        self.assertEqual("lock", macros[0]["icon"])
+        self.assertNotIn("icon", macros[1])
+
+
+class StatsDateTests(unittest.TestCase):
+    def test_stats_include_local_date(self):
+        from datetime import date
+
+        class FakeReader:
+            def read(self):
+                return {}
+
+        previous = bridge.current_counters()
+        with patch.object(bridge, "read_nvidia_gpu", return_value={}):
+            payload, _ = bridge.get_stats(previous, ".", FakeReader())
+        self.assertEqual(date.today().isoformat(), payload["date"])
+
+
+class NotifyPacketTests(unittest.TestCase):
+    def test_notify_packet_shape(self):
+        self.assertEqual(
+            {"type": "notify", "src": "pc", "app": "Teams", "from": "A", "body": "B"},
+            bridge.notify_packet("Teams", "A", "B"),
+        )
+
+    def test_notify_packet_cuts_long_text_and_keeps_vietnamese(self):
+        packet = bridge.notify_packet("Zalo", "Mẹ", "Đi ngủ đi " * 30, source="phone")
+        self.assertEqual("phone", packet["src"])
+        self.assertEqual(120, len(packet["body"]))
+        self.assertTrue(packet["body"].startswith("Đi ngủ đi"))
+
+
+class WifiProvisioningTests(unittest.TestCase):
+    def test_no_wifi_section_means_no_packet(self):
+        self.assertIsNone(bridge.wifi_packet({}))
+        self.assertIsNone(bridge.wifi_packet({"wifi": {"ssid": ""}}))
+
+    def test_wifi_packet_shape(self):
+        config = {
+            "wifi": {"ssid": "net", "password": "pw"},
+            "notifications": {"udp_port": 4210, "token": "t" * 24},
+        }
+        self.assertEqual(
+            {"type": "wifi", "ssid": "net", "pass": "pw", "token": "t" * 24, "port": 4210},
+            bridge.wifi_packet(config),
+        )
+
+    def test_token_is_generated_once_and_saved(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config = {"notifications": {"token": ""}}
+            path.write_text(json.dumps(config), encoding="utf-8")
+            token = bridge.ensure_notify_token(config, path)
+            self.assertEqual(24, len(token))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(token, saved["notifications"]["token"])
+            self.assertEqual(token, bridge.ensure_notify_token(saved, path))
+
+    def test_udp_notify_payload(self):
+        sent = []
+
+        class FakeSocket:
+            def __init__(self, *args):
+                pass
+
+            def sendto(self, data, addr):
+                sent.append((json.loads(data.decode("utf-8")), addr))
+
+            def close(self):
+                pass
+
+        with patch.object(bridge.socket, "socket", FakeSocket):
+            bridge.send_udp_notify("10.0.0.5", 4210, "tok", "Teams", "A", "B" * 300)
+        payload, addr = sent[0]
+        self.assertEqual(("10.0.0.5", 4210), addr)
+        self.assertEqual({"token", "app", "from", "body"}, set(payload))
+        self.assertEqual("tok", payload["token"])
+        self.assertEqual(120, len(payload["body"]))
+
+    def test_udp_notify_fits_device_limit_with_multibyte_text(self):
+        sent = []
+
+        class FakeSocket:
+            def __init__(self, *args):
+                pass
+
+            def sendto(self, data, addr):
+                sent.append(data)
+
+            def close(self):
+                pass
+
+        with patch.object(bridge.socket, "socket", FakeSocket):
+            bridge.send_udp_notify("10.0.0.5", 4210, "t" * 24, "ữ" * 200, "ữ" * 200, "ữ" * 200)
+        self.assertLessEqual(len(sent[0]), 1024)
+        self.assertTrue(json.loads(sent[0].decode("utf-8"))["body"])
+
+
+class ToastForwardingTests(unittest.TestCase):
+    def setUp(self):
+        import queue
+
+        self.toasts = queue.Queue()
+        self.toasts.put(("Teams", "A", "B"))
+        self.config = {"notifications": {"token": "tok"}}
+
+    def test_without_device_wifi_toasts_go_over_usb(self):
+        with patch.object(bridge, "send_json") as usb, patch.object(bridge, "send_udp_notify") as udp, \
+                patch.object(bridge, "log"):
+            bridge.forward_pc_toasts(self.toasts, object(), None, self.config)
+        usb.assert_called_once()
+        self.assertEqual("notify", usb.call_args[0][1]["type"])
+        udp.assert_not_called()
+
+    def test_with_device_wifi_toasts_go_over_udp(self):
+        with patch.object(bridge, "send_json") as usb, patch.object(bridge, "send_udp_notify") as udp, \
+                patch.object(bridge, "log"):
+            bridge.forward_pc_toasts(self.toasts, object(), ("10.0.0.5", 4210), self.config)
+        udp.assert_called_once_with("10.0.0.5", 4210, "tok", "Teams", "A", "B")
+        usb.assert_not_called()
+
+    def test_udp_error_falls_back_to_usb(self):
+        with patch.object(bridge, "send_json") as usb, \
+                patch.object(bridge, "send_udp_notify", side_effect=OSError("down")), \
+                patch.object(bridge, "log"):
+            bridge.forward_pc_toasts(self.toasts, object(), ("10.0.0.5", 4210), self.config)
+        usb.assert_called_once()
+
 
 class GoldFeedTests(unittest.TestCase):
     SAMPLE = {

@@ -116,11 +116,57 @@ Stop the host bridge before flashing; it keeps the serial port open.
 
 Additions in this fork (both environments unless noted):
 
-- **18 buttons on 3 control pages.** The footer has five tabs: `MONITOR`, three macro pages and `INFO`. Macro IDs 1-6 are page 1, 7-12 page 2, 13-18 page 3. Page titles and tab names are in `MACRO_PAGE_TITLES` / `MACRO_PAGE_TABS` in `src/main.cpp`. Empty slots are not drawn.
+- **18 buttons on 3 control pages.** Macro IDs 1-6 are page 1, 7-12 page 2, 13-18 page 3. Empty slots are not drawn.
 - **Hold to confirm.** A macro with `"confirm_hold": true` shows `HOLD` and runs only after the finger stays on it for one second while a bar fills. Use it for actions such as Lock PC.
-- **Gold price page (`INFO`).** The bridge fetches Vietnamese gold prices from `https://www.vang.today/api/prices` every 15 minutes and shows up to six products in thousand VND per chi (1 luong = 10 chi), with the daily change and the world XAU/USD price. Configure the `gold` section in `host/config.json`.
+- **Gold prices.** The bridge fetches Vietnamese gold prices from `https://www.vang.today/api/prices` every 15 minutes and shows up to six products in thousand VND per chi (1 luong = 10 chi), with the daily change and the world XAU/USD price. Configure the `gold` section in `host/config.json`.
 - **Touch filter** (`cyd_2usb`). A press must reach a minimum pressure and stay still for 40 ms, which removes phantom presses on the resistive panel.
-- **Status LED** (`cyd_2usb`). Blue: waiting for the PC. Green: live data. Red: data older than 15 s. Short cyan flash: button pressed.
+- **Status LED** (`cyd_2usb`). Blue: waiting for the PC. Green: live data. Red: data older than 15 s. Cyan flash: button pressed. Blue flash: new notification.
+
+On the Elecrow build the footer has five tabs (`MONITOR`, three macro pages, `INFO`). The `cyd_2usb` build uses UI v2 below.
+
+### UI v3 (`cyd_2usb`)
+
+- **Dark launcher.** Home is a 4×2 launcher of gradient app icons (Monitor, Controls, Info, Claude, AI Tools, AI GPU, Notify, Settings) under a status bar with the PC date, time and Wi-Fi / Bluetooth / USB state, and a footer showing the PC, iPhone and Wi-Fi links. Every other screen has a slim header with a rounded Home button. Dark palette, light text, English labels.
+- **Controls.** Three pages switched with the ‹ › arrows; page dots in the header. Each macro is a gradient icon with its label below; set `"icon"` and `"color"` per macro (see `docs/MACROS.md`).
+- **Info.** Five tabs: **Gold** (vang.today, thousand VND per chi), **Coin** (CoinGecko, USD and 24h change), **Stock** (VN-Index with an intraday sparkline, VN30, HNX-Index and a watchlist, from VPS's public price board API), **Weather** (Open-Meteo, current and 4 days) and **Calendar** (month view with Vietnamese lunar dates, computed on the device). Configure `coins`, `stocks` and `weather` in `host/config.json`:
+
+  ```json
+  "coins": ["bitcoin", "ethereum", "binancecoin", "solana", "ripple"],
+  "stocks": ["VNM", "HPG"],
+  "weather": {"city": "Da Nang", "latitude": 16.0544, "longitude": 108.2022}
+  ```
+
+  Coins refresh every 5 minutes, stocks every 2 minutes during trading hours (30 minutes otherwise), weather every 30 minutes. The VPS endpoints are unofficial and may change; the Stock tab then shows "No data yet" while the other tabs keep working.
+- **Notifications.** The NOTIFY screen lists the newest notifications with their source (phone or PC); a 2.5 s banner appears on other screens (tap it to open the list). `HIDE` replaces message text with "Content hidden". Vietnamese text keeps its diacritics (unifont Vietnamese font); emoji are dropped.
+- **Claude Code, AI Tools, AI GPU, Settings** are placeholders for a later phase.
+
+### iPhone notifications (Bluetooth)
+
+The `cyd_2usb` build advertises as **ESP32 Deck** and reads iPhone notifications through Apple's ANCS. Pair once:
+
+1. On the iPhone open **Settings → Bluetooth** and tap **ESP32 Deck**. If it is not listed, connect from a BLE app such as nRF Connect.
+2. Accept the pairing request and **Allow** the device to show notifications.
+3. The PHONE chip on the NOTIFY screen turns green. The pairing is remembered; the iPhone reconnects by itself when in range.
+
+iOS decides which notifications are shared: every app with notifications enabled on the iPhone. Message previews follow the iPhone's *Show Previews* setting.
+
+### PC notifications (Wi-Fi)
+
+The bridge forwards every Windows toast (Teams, Outlook, Zalo, Phone Link…) to the device.
+
+1. Add your network to the local, git-ignored `host/config.json`:
+
+   ```json
+   "wifi": {"ssid": "<your network>", "password": "<your password>"},
+   "notifications": {"enabled": true, "udp_port": 4210, "token": ""}
+   ```
+
+2. Start the bridge. It generates a random `token` on first run, saves it in `config.json`, and sends Wi-Fi settings and token to the device over USB. The device stores them in its own flash; nothing is compiled into the firmware.
+3. When the device reports its Wi-Fi address, toasts go over UDP; until then they go over USB. Datagrams without the right token are dropped.
+
+Requires the `winrt-*` packages in `host/requirements.txt` (installed by `run_windows.bat`). If Windows refuses notification access, the bridge logs "PC notifications unavailable" and phone notifications keep working.
+
+**Privacy:** the bridge never logs Wi-Fi credentials, the token or notification text, and the device keeps notifications only in RAM (newest 10, cleared on reboot).
 
 ## Repository layout
 
