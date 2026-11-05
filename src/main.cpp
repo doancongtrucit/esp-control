@@ -3,12 +3,20 @@
 #include <Preferences.h>
 #include <TFT_eSPI.h>
 #include <math.h>
+#ifdef DECK_CYD_TOUCH
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
+#endif
 
 namespace {
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr int SCREEN_W = 320;
 constexpr int SCREEN_H = 240;
+#ifdef DECK_BACKLIGHT_PIN
+constexpr int BACKLIGHT_PIN = DECK_BACKLIGHT_PIN;
+#else
 constexpr int BACKLIGHT_PIN = 27;
+#endif
 constexpr uint32_t STALE_AFTER_MS = 15000;
 constexpr uint32_t TOUCH_DEBOUNCE_MS = 300;
 constexpr char PROTOCOL_PREFIX[] = "DD:";
@@ -29,7 +37,36 @@ constexpr uint16_t C_BAR_BG = 0x2945;
 TFT_eSPI tft;
 Preferences prefs;
 
-enum class Page : uint8_t { Monitor, Macros };
+#ifdef DECK_CYD_TOUCH
+// CYD wiring: XPT2046 on its own VSPI bus (CLK 25, MISO 39, MOSI 32, CS 33, IRQ 36).
+constexpr int TOUCH_CLK = 25;
+constexpr int TOUCH_MISO = 39;
+constexpr int TOUCH_MOSI = 32;
+constexpr int TOUCH_CS_PIN = 33;
+constexpr int TOUCH_IRQ = 36;
+// Raw XPT2046 range for this panel in landscape (rotation 1).
+constexpr int TOUCH_RAW_X_MIN = 200;
+constexpr int TOUCH_RAW_X_MAX = 3700;
+constexpr int TOUCH_RAW_Y_MIN = 240;
+constexpr int TOUCH_RAW_Y_MAX = 3800;
+
+SPIClass touchSpi(VSPI);
+XPT2046_Touchscreen ts(TOUCH_CS_PIN, TOUCH_IRQ);
+#endif
+
+bool readTouch(uint16_t *x, uint16_t *y) {
+#ifdef DECK_CYD_TOUCH
+  if (!ts.tirqTouched() || !ts.touched()) return false;
+  const TS_Point p = ts.getPoint();
+  *x = constrain(map(p.x, TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
+  *y = constrain(map(p.y, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, 0, SCREEN_H - 1), 0, SCREEN_H - 1);
+  return true;
+#else
+  return tft.getTouch(x, y);
+#endif
+}
+
+enum class Page : uint8_t { Monitor, Macros, Info };
 Page page = Page::Monitor;
 
 struct Stats {
@@ -57,8 +94,33 @@ struct Stats {
   bool everUpdated = false;
 } stats;
 
-String macroLabels[6] = {
-    "CHATGPT", "OLLAMA", "VOICE SERVER", "TERMINAL", "TASK MANAGER", "LOCK PC"};
+// INFO page data (gold prices, thousand VND per chi), sent by the host bridge
+// as {"type":"info","g":{...}}.
+constexpr uint8_t GOLD_ROWS = 6;
+
+struct InfoData {
+  bool hasGold = false;
+  String goldTime;
+  String goldName[GOLD_ROWS];
+  long goldBuy[GOLD_ROWS] = {0};
+  long goldSell[GOLD_ROWS] = {0};
+  long goldChange[GOLD_ROWS] = {0};
+  uint8_t goldCount = 0;
+  float xau = NAN;
+  float xauChange = 0;
+} info;
+
+constexpr uint8_t MACROS_PER_PAGE = 6;
+constexpr uint8_t MACRO_PAGES = 3;
+constexpr uint8_t MACRO_COUNT = MACROS_PER_PAGE * MACRO_PAGES;
+const char *const MACRO_PAGE_TITLES[MACRO_PAGES] = {"PC TOOLS", "AI & WORK", "GAMING"};
+const char *const MACRO_PAGE_TABS[MACRO_PAGES] = {"PC", "AI/WORK", "GAME"};
+
+String macroLabels[MACRO_COUNT] = {
+    "TASK MANAGER", "DOWNLOADS", "LOCK PC", "SCREENSHOT", "EDGE", "CONTROL PANEL",
+    "CLAUDE", "GEMINI", "CHATGPT", "TEAMS", "OUTLOOK", "ZALO",
+    "LEAGUE OF LEGENDS", "DISCORD", "WEB", "", "", ""};
+uint8_t macroPage = 0;
 String serialLine;
 uint32_t lastTouchMs = 0;
 bool fullRedrawRequested = true;
@@ -199,23 +261,127 @@ void drawInfoBoxDynamic(int x, int y, int w, int h, const String &line1,
   tft.drawString(line2, x + 6, y + 43, 1);
 }
 
+// Footer tabs: MONITOR, one tab per macro page, then INFO.
+constexpr int FOOTER_Y = 212;
+constexpr int FOOTER_TABS = 1 + MACRO_PAGES + 1;
+constexpr int FOOTER_TAB_W = SCREEN_W / FOOTER_TABS;
+constexpr int INFO_TAB = FOOTER_TABS - 1;
+
 void drawFooter(Page selected) {
-  constexpr int y = 212;
   constexpr int h = 28;
-  constexpr int w = 160;
 
-  tft.fillRect(0, y, SCREEN_W, h, C_PANEL);
-
-  tft.fillRect(0, y, w, h, selected == Page::Monitor ? C_ACCENT : C_PANEL);
+  tft.fillRect(0, FOOTER_Y, SCREEN_W, h, C_PANEL);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(selected == Page::Monitor ? TFT_BLACK : C_TEXT,
-                   selected == Page::Monitor ? C_ACCENT : C_PANEL);
-  tft.drawString("PC MONITOR", 80, y + h / 2, 2);
 
-  tft.fillRect(w, y, w, h, selected == Page::Macros ? C_ACCENT : C_PANEL);
-  tft.setTextColor(selected == Page::Macros ? TFT_BLACK : C_TEXT,
-                   selected == Page::Macros ? C_ACCENT : C_PANEL);
-  tft.drawString("CONTROLS", 240, y + h / 2, 2);
+  for (int tab = 0; tab < FOOTER_TABS; ++tab) {
+    bool active;
+    const char *label;
+    if (tab == 0) {
+      active = selected == Page::Monitor;
+      label = "MONITOR";
+    } else if (tab == INFO_TAB) {
+      active = selected == Page::Info;
+      label = "INFO";
+    } else {
+      active = selected == Page::Macros && macroPage == tab - 1;
+      label = MACRO_PAGE_TABS[tab - 1];
+    }
+    const int x = tab * FOOTER_TAB_W;
+    tft.fillRect(x, FOOTER_Y, FOOTER_TAB_W, h, active ? C_ACCENT : C_PANEL);
+    if (tab > 0) tft.drawFastVLine(x, FOOTER_Y + 4, h - 8, C_BAR_BG);
+    tft.setTextColor(active ? TFT_BLACK : C_TEXT, active ? C_ACCENT : C_PANEL);
+    tft.drawString(label, x + FOOTER_TAB_W / 2, FOOTER_Y + h / 2, 2);
+  }
+}
+
+// 14250 -> "14.250" (Vietnamese thousands separator).
+String fmtThousands(long value) {
+  const bool negative = value < 0;
+  String digits = String(negative ? -value : value);
+  String out;
+  int count = 0;
+  for (int i = digits.length() - 1; i >= 0; --i) {
+    out = digits[i] + out;
+    if (++count % 3 == 0 && i > 0) out = "." + out;
+  }
+  return negative ? "-" + out : out;
+}
+
+String signedThousands(long value) {
+  if (value > 0) return "+" + fmtThousands(value);
+  return fmtThousands(value);
+}
+
+uint16_t changeColor(float value) {
+  if (value > 0.0f) return C_GOOD;
+  if (value < 0.0f) return C_BAD;
+  return C_MUTED;
+}
+
+void drawInfoFull() {
+  // Column right edges: buy, sell, change.
+  constexpr int colBuy = 178;
+  constexpr int colSell = 254;
+  constexpr int colChange = 314;
+  constexpr int headY = 32;
+  constexpr int rowY0 = 52;
+  constexpr int rowH = 24;
+
+  tft.fillScreen(C_BG);
+  drawHeaderStatic("GIA VANG");
+  drawHeaderDynamic();
+
+  tft.fillRect(0, headY, SCREEN_W, 18, C_PANEL);
+  tft.setTextColor(C_MUTED, C_PANEL);
+  tft.setTextDatum(ML_DATUM);
+  tft.drawString("nghin d/chi", 8, headY + 9, 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.drawString("MUA", colBuy, headY + 9, 2);
+  tft.drawString("BAN", colSell, headY + 9, 2);
+  tft.drawString("+/-", colChange, headY + 9, 2);
+
+  if (!info.hasGold) {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(C_MUTED, C_BG);
+    tft.drawString("Dang tai gia vang...", SCREEN_W / 2, 120, 2);
+    drawFooter(Page::Info);
+    return;
+  }
+
+  for (int i = 0; i < info.goldCount; ++i) {
+    const int y = rowY0 + i * rowH;
+    const uint16_t bg = (i % 2 == 0) ? C_BG : C_PANEL_2;
+    const int midY = y + rowH / 2;
+    tft.fillRect(0, y, SCREEN_W, rowH, bg);
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(C_TEXT, bg);
+    tft.drawString(info.goldName[i], 8, midY, 2);
+
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(C_TEXT, bg);
+    tft.drawString(fmtThousands(info.goldBuy[i]), colBuy, midY, 2);
+    tft.setTextColor(C_WARN, bg);
+    tft.drawString(fmtThousands(info.goldSell[i]), colSell, midY, 2);
+    tft.setTextColor(changeColor(info.goldChange[i]), bg);
+    tft.drawString(signedThousands(info.goldChange[i]), colChange, midY, 2);
+  }
+
+  // World price and update time under the table.
+  constexpr int bottomY = 203;
+  tft.setTextDatum(ML_DATUM);
+  if (!isnan(info.xau)) {
+    tft.setTextColor(C_MUTED, C_BG);
+    tft.drawString("The gioi $" + String(info.xau, 1) + "/oz", 8, bottomY, 1);
+    tft.setTextColor(changeColor(info.xauChange), C_BG);
+    const String change = (info.xauChange > 0 ? "+" : "") + String(info.xauChange, 1);
+    tft.drawString(change, 8 + tft.textWidth("The gioi $" + String(info.xau, 1) + "/oz ", 1), bottomY, 1);
+  }
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(C_MUTED, C_BG);
+  tft.drawString("Cap nhat " + info.goldTime, colChange, bottomY, 1);
+
+  drawFooter(Page::Info);
 }
 
 void drawMonitorDynamic() {
@@ -346,7 +512,7 @@ void drawMacroButton(uint8_t id, int x, int y, int w, int h) {
 
 void drawMacrosFull() {
   tft.fillScreen(C_BG);
-  drawHeaderStatic("AI & PC CONTROLS");
+  drawHeaderStatic(MACRO_PAGE_TITLES[macroPage]);
   drawHeaderDynamic();
 
   constexpr int gap = 7;
@@ -355,11 +521,12 @@ void drawMacrosFull() {
   constexpr int bw = 96;
   constexpr int bh = 78;
 
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < MACROS_PER_PAGE; ++i) {
+    const uint8_t id = macroPage * MACROS_PER_PAGE + i + 1;
+    if (macroLabels[id - 1].length() == 0) continue;
     const int col = i % 3;
     const int row = i / 3;
-    drawMacroButton(i + 1, x0 + col * (bw + gap), y0 + row * (bh + gap),
-                    bw, bh);
+    drawMacroButton(id, x0 + col * (bw + gap), y0 + row * (bh + gap), bw, bh);
   }
   drawFooter(Page::Macros);
 }
@@ -367,6 +534,8 @@ void drawMacrosFull() {
 void renderFull() {
   if (page == Page::Monitor) {
     drawMonitorFull();
+  } else if (page == Page::Info) {
+    drawInfoFull();
   } else {
     drawMacrosFull();
   }
@@ -394,7 +563,7 @@ void sendMacro(uint8_t id) {
 }
 
 void flashMacro(uint8_t id) {
-  const int index = id - 1;
+  const int index = (id - 1) % MACROS_PER_PAGE;
   constexpr int gap = 7;
   constexpr int x0 = 8;
   constexpr int y0 = 36;
@@ -415,13 +584,17 @@ void handleTouch() {
 
   uint16_t x = 0;
   uint16_t y = 0;
-  if (!tft.getTouch(&x, &y)) return;
+  if (!readTouch(&x, &y)) return;
   lastTouchMs = millis();
 
-  if (y >= 212) {
-    const Page requested = (x < 160) ? Page::Monitor : Page::Macros;
-    if (requested != page) {
+  if (y >= FOOTER_Y) {
+    const int tab = min(x / FOOTER_TAB_W, FOOTER_TABS - 1);
+    const bool macroTab = tab > 0 && tab < INFO_TAB;
+    const Page requested = tab == 0 ? Page::Monitor : (macroTab ? Page::Macros : Page::Info);
+    const uint8_t requestedMacroPage = macroTab ? tab - 1 : macroPage;
+    if (requested != page || requestedMacroPage != macroPage) {
       page = requested;
+      macroPage = requestedMacroPage;
       fullRedrawRequested = true;
     }
     return;
@@ -435,14 +608,16 @@ void handleTouch() {
   constexpr int bw = 96;
   constexpr int bh = 78;
 
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < MACROS_PER_PAGE; ++i) {
+    const uint8_t id = macroPage * MACROS_PER_PAGE + i + 1;
     const int col = i % 3;
     const int row = i / 3;
     const int bx = x0 + col * (bw + gap);
     const int by = y0 + row * (bh + gap);
     if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
-      flashMacro(i + 1);
-      sendMacro(i + 1);
+      if (macroLabels[id - 1].length() == 0) return;
+      flashMacro(id);
+      sendMacro(id);
       return;
     }
   }
@@ -505,7 +680,7 @@ void handleConfig(JsonDocument &doc) {
   for (JsonObjectConst item : macros) {
     const int id = item["id"] | 0;
     const char *label = item["label"] | "";
-    if (id < 1 || id > 6 || !label || label[0] == '\0') continue;
+    if (id < 1 || id > MACRO_COUNT || !label || label[0] == '\0') continue;
 
     String next(label);
     if (next.length() > 22) next = next.substring(0, 22);
@@ -518,6 +693,27 @@ void handleConfig(JsonDocument &doc) {
   if (labelsChanged && page == Page::Macros) {
     fullRedrawRequested = true;
   }
+}
+
+void handleInfo(JsonDocument &doc) {
+  JsonObjectConst gold = doc["g"].as<JsonObjectConst>();
+  if (!gold.isNull()) {
+    info.hasGold = true;
+    info.goldTime = gold["time"] | "";
+    info.goldCount = 0;
+    for (JsonObjectConst item : gold["items"].as<JsonArrayConst>()) {
+      if (info.goldCount >= GOLD_ROWS) break;
+      const uint8_t i = info.goldCount++;
+      info.goldName[i] = item["n"] | "";
+      info.goldBuy[i] = item["b"] | 0L;
+      info.goldSell[i] = item["s"] | 0L;
+      info.goldChange[i] = item["c"] | 0L;
+    }
+    info.xau = readFloat(gold["xau"]);
+    info.xauChange = readFloat(gold["xauc"], 0.0f);
+  }
+
+  if (page == Page::Info) fullRedrawRequested = true;
 }
 
 void processSerialLine(const String &line) {
@@ -551,6 +747,8 @@ void processSerialLine(const String &line) {
     handleStats(doc);
   } else if (strcmp(type, "config") == 0) {
     handleConfig(doc);
+  } else if (strcmp(type, "info") == 0) {
+    handleInfo(doc);
   } else if (strcmp(type, "ping") == 0) {
     sendSimpleFrame("pong");
   } else if (strcmp(type, "recalibrate") == 0) {
@@ -579,8 +777,14 @@ void pollSerial() {
 }
 
 void setupTouchCalibration() {
-  uint16_t calData[5] = {0};
   prefs.begin("deskdeck", false);
+#ifdef DECK_CYD_TOUCH
+  // Fixed raw-to-screen mapping instead of TFT_eSPI's shared-bus calibration.
+  touchSpi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS_PIN);
+  ts.begin(touchSpi);
+  ts.setRotation(1);
+#else
+  uint16_t calData[5] = {0};
   const size_t length = prefs.getBytesLength("touchcal");
 
   if (length == sizeof(calData)) {
@@ -601,6 +805,7 @@ void setupTouchCalibration() {
   tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 15);
   tft.setTouch(calData);
   prefs.putBytes("touchcal", calData, sizeof(calData));
+#endif
 }
 }  // namespace
 

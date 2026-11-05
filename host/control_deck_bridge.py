@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -41,6 +42,8 @@ except Exception:
 APP_VERSION = "0.4.0"
 PROTOCOL_PREFIX = "DD:"
 PROTOCOL_VERSION = 3
+# 3 pages x 6 buttons on the display (firmware MACRO_COUNT).
+MAX_MACROS = 18
 CH340_VIDS = {0x1A86}
 LOG_FILE: Path | None = None
 
@@ -668,7 +671,7 @@ def macro_packet(config: dict[str, Any]) -> dict[str, Any]:
             macro_id = int(item.get("id"))
         except Exception:
             continue
-        if 1 <= macro_id <= 6:
+        if 1 <= macro_id <= MAX_MACROS:
             macros.append(
                 {
                     "id": macro_id,
@@ -876,11 +879,96 @@ def build_lhm_reader(config: dict[str, Any]) -> LibreHardwareMonitorHttpReader:
     )
 
 
+# ---------------------------------------------------------------------------
+# INFO page: Vietnamese gold prices (vang.today), in thousand VND per chi.
+# Fetched on a background thread so slow HTTP never blocks the serial loop.
+# ---------------------------------------------------------------------------
+
+DEFAULT_GOLD_ITEMS = [
+    ["SJL1L10", "SJC mieng"],
+    ["SJ9999", "Nhan SJC"],
+    ["DOHNL", "DOJI HN"],
+    ["PQHN24NTT", "PNJ 24K"],
+    ["BTSJC", "Bao Tin SJC"],
+    ["BT9999NTT", "Bao Tin 9999"],
+]
+VND_PER_LUONG_TO_K_PER_CHI = 1 / 10 / 1000  # 1 luong = 10 chi
+
+
+def http_json(url: str, timeout: float = 10.0) -> Any:
+    request = urllib.request.Request(url, headers={"User-Agent": f"PC-Control-Deck/{APP_VERSION}"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_gold(gold_config: dict[str, Any]) -> dict[str, Any]:
+    data = http_json(str(gold_config.get("url", "https://www.vang.today/api/prices")))
+    prices = data.get("prices", {})
+    items = []
+    for code, label in gold_config.get("items", DEFAULT_GOLD_ITEMS):
+        price = prices.get(code)
+        if not price:
+            continue
+        items.append(
+            {
+                "n": str(label)[:14],
+                "b": round(price["buy"] * VND_PER_LUONG_TO_K_PER_CHI),
+                "s": round(price["sell"] * VND_PER_LUONG_TO_K_PER_CHI),
+                "c": round(price.get("change_sell", 0) * VND_PER_LUONG_TO_K_PER_CHI),
+            }
+        )
+    world = prices.get("XAUUSD", {})
+    return {
+        "time": str(data.get("time", "")),
+        "items": items[:6],
+        "xau": world.get("buy"),
+        "xauc": round(world.get("change_buy") or 0, 1),
+    }
+
+
+class InfoFeed:
+    """Keeps the latest INFO packet, refreshed in the background."""
+
+    def __init__(self, config: dict[str, Any]):
+        self.gold_config = config.get("gold") or {}
+        self.enabled = bool(self.gold_config.get("enabled", True))
+        self.refresh_seconds = max(60.0, float(self.gold_config.get("refresh_minutes", 15)) * 60.0)
+        self.lock = threading.Lock()
+        self.packet: dict[str, Any] | None = None
+        self.version = 0
+
+    def start(self) -> None:
+        if self.enabled:
+            threading.Thread(target=self._loop, name="info-feed", daemon=True).start()
+
+    def snapshot(self) -> tuple[int, dict[str, Any] | None]:
+        with self.lock:
+            return self.version, self.packet
+
+    def _loop(self) -> None:
+        while True:
+            self.refresh()
+            time.sleep(self.refresh_seconds)
+
+    def refresh(self) -> None:
+        try:
+            packet = {"type": "info", "g": fetch_gold(self.gold_config)}
+        except Exception as exc:
+            log(f"Gold price update failed: {exc}")
+            return
+        with self.lock:
+            if packet != self.packet:
+                self.packet = packet
+                self.version += 1
+
+
 def run(config: dict[str, Any]) -> None:
     baud = int(config.get("baud", 115200))
     interval = max(0.5, float(config.get("interval_seconds", 2.0)))
     disk_path = disk_path_from_config(config)
     lhm = build_lhm_reader(config)
+    info_feed = InfoFeed(config)
+    info_feed.start()
 
     psutil.cpu_percent(interval=None)
     previous = current_counters()
@@ -922,6 +1010,7 @@ def run(config: dict[str, Any]) -> None:
 
                 send_json(serial_port, macro_packet(config))
                 last_send = 0.0
+                sent_info_version = -1
                 receive_buffer = bytearray()
 
                 while True:
@@ -930,6 +1019,11 @@ def run(config: dict[str, Any]) -> None:
                         payload, previous = get_stats(previous, disk_path, lhm)
                         send_json(serial_port, payload)
                         last_send = now
+
+                    info_version, info_packet = info_feed.snapshot()
+                    if info_packet is not None and info_version != sent_info_version:
+                        send_json(serial_port, info_packet)
+                        sent_info_version = info_version
 
                     chunk = serial_port.read(256)
                     if chunk:
@@ -961,6 +1055,7 @@ def run(config: dict[str, Any]) -> None:
                                         f"!= device protocol {protocol}"
                                     )
                                 send_json(serial_port, macro_packet(config))
+                                sent_info_version = -1  # device rebooted: resend INFO
                             elif message_type == "error":
                                 log(
                                     f"ESP protocol error: {message.get('code', 'unknown')} "
