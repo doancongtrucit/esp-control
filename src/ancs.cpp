@@ -193,4 +193,6 @@ void ancsLoop() {
 
 bool ancsConnected() { return connected && encrypted; }
 bool ancsReady() { return ready; }
+void ancsForgetPairing() { NimBLEDevice::deleteAllBonds(); }
+
 #endif  // DECK_UI_V2

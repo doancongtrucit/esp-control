@@ -208,6 +208,7 @@ class InfoFeeds:
         except Exception as exc:
             self.log(f"{kind.title()} update failed: {type(exc).__name__}")
             return
+        frame["date"] = now.strftime("%d/%m")  # the deck shows it when the data is not from today
         with self.lock:
             version = self.frames.get(kind, (0, None))[0]
             self.frames[kind] = (version + 1, frame)

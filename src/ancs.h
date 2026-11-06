@@ -10,4 +10,5 @@ using AncsHandler = void (*)(const String &app, const String &title, const Strin
 void ancsBegin(const char *deviceName, AncsHandler handler);
 void ancsLoop();       // call from loop(): discovery, attribute requests, parsing
 bool ancsConnected();  // iPhone connected and encrypted
-bool ancsReady();      // subscribed to ANCS, notifications flow
+bool ancsReady();
+void ancsForgetPairing();  // deletes every bond; the phone must pair again      // subscribed to ANCS, notifications flow

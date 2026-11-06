@@ -33,3 +33,9 @@ String stockPriceText(double thousandVnd) { return fmtGrouped(round(thousandVnd 
 String signedPercent(double value) {
   return (value > 0 ? "+" : "") + fmtGrouped(value, 2) + "%";
 }
+
+String updatedText(const char *date, const char *time, const String &today) {
+  if (!time || !*time) return "--";
+  if (!date || !*date || today == date) return time;
+  return String(date) + " " + time;
+}

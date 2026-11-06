@@ -12,6 +12,7 @@
 #ifdef DECK_UI_V2
 #include "ancs.h"
 #include "color_util.h"
+#include "deck_settings.h"
 #include "format_util.h"
 #include "icons.h"
 #include "lunar.h"
@@ -42,6 +43,7 @@ constexpr uint32_t TOUCH_DEBOUNCE_MS = 300;
 constexpr char PROTOCOL_PREFIX[] = "DD:";
 constexpr size_t PROTOCOL_PREFIX_LEN = 3;
 constexpr uint8_t PROTOCOL_VERSION = 3;
+constexpr char FIRMWARE_VERSION[] = "0.4.0";
 
 constexpr uint16_t C_BG = 0x0841;
 constexpr uint16_t C_PANEL = 0x1082;
@@ -201,6 +203,7 @@ struct CoinData {
   uint8_t count = 0;
   CoinRow rows[5];
   char time[6] = "";
+  char date[6] = "";
 } coins;
 
 struct QuoteRow {
@@ -219,6 +222,7 @@ struct StockData {
   float spark[SPARK_MAX];
   float open = 0;
   char time[6] = "";
+  char date[6] = "";
 } stocks;
 
 struct ForecastDay {
@@ -240,6 +244,7 @@ struct WeatherData {
   uint8_t dayCount = 0;
   ForecastDay days[4];
   char time[6] = "";
+  char date[6] = "";
 } weather;
 
 int8_t macroColorFromName(const char *name) {
@@ -253,8 +258,13 @@ NotifyStore notifyStore;
 uint32_t notifyFlashUntil = 0;
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
+DeckSettings settings;
+bool screenAsleep = false;
+uint32_t lastActivityMs = 0;
+constexpr uint8_t BACKLIGHT_CHANNEL = 7;
 void uiRenderFullV2();
 void uiNotificationArrived();
+void uiNotificationQuiet();
 void uiRenderDynamicV2();
 void uiHandleTouchV2(uint16_t x, uint16_t y);
 void uiConfigChanged();
@@ -783,12 +793,93 @@ void setupLed() {
 }
 #endif
 
+#ifdef DECK_UI_V2
+// ---------- Settings: NVS blob, backlight, screen sleep, quiet hours ----------
+Preferences settingsPrefs;  // own namespace, separate from touch calibration
+constexpr char SETTINGS_NS[] = "decksettings";
+
+void saveSettings() {
+  uint8_t blob[SETTINGS_BLOB_SIZE];
+  packSettings(settings, blob);
+  settingsPrefs.begin(SETTINGS_NS, false);
+  settingsPrefs.putBytes("blob", blob, sizeof(blob));
+  settingsPrefs.end();
+}
+
+void loadSettings() {
+  settings.rotate180 = DISPLAY_ROTATION == 3;  // until the user picks, follow the build
+  if (!settingsPrefs.begin(SETTINGS_NS, true)) return;  // nothing saved yet
+  uint8_t blob[SETTINGS_BLOB_SIZE];
+  if (settingsPrefs.getBytesLength("blob") == sizeof(blob)) {
+    settingsPrefs.getBytes("blob", blob, sizeof(blob));
+    unpackSettings(blob, sizeof(blob), settings);
+  }
+  settingsPrefs.end();
+}
+
+void clearSettings() {
+  settingsPrefs.begin(SETTINGS_NS, false);
+  settingsPrefs.clear();
+  settingsPrefs.end();
+}
+
+void applyRotation() {
+  const uint8_t rotation = settings.rotate180 ? 3 : 1;
+  tft.setRotation(rotation);
+#ifdef DECK_CYD_TOUCH
+  ts.setRotation(rotation);  // touch turns with the picture
+#endif
+}
+
+void applyBacklight() {
+  ledcWrite(BACKLIGHT_CHANNEL, screenAsleep ? 0 : backlightDuty(settings.brightness));
+}
+
+void setupBacklight() {
+  ledcSetup(BACKLIGHT_CHANNEL, 5000, 8);
+  ledcAttachPin(BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
+  applyBacklight();
+}
+
+// Any touch or alert keeps the screen on; returns true if it was asleep.
+bool noteActivity() {
+  lastActivityMs = millis();
+  if (!screenAsleep) return false;
+  screenAsleep = false;
+  applyBacklight();
+  return true;
+}
+
+void updateScreenSleep() {
+  const uint32_t timeout = sleepTimeoutMs(settings.sleepIndex);
+  if (screenAsleep || timeout == 0 || millis() - lastActivityMs < timeout) return;
+  screenAsleep = true;
+  applyBacklight();
+}
+
+// PC clock hour, or -1 before the bridge has sent the time.
+int clockHour() {
+  if (!stats.clockValid) return -1;
+  const uint32_t seconds = (stats.clockSecondsAtSync + (millis() - stats.clockSyncMs) / 1000UL) % 86400UL;
+  return static_cast<int>(seconds / 3600UL);
+}
+
+bool quietNow() { return settings.quietOn && inQuietHours(clockHour(), settings.quietStart, settings.quietEnd); }
+bool ledNightNow() {
+  return settings.ledNight && inQuietHours(clockHour(), settings.quietStart, settings.quietEnd);
+}
+#endif
+
 void updateStatusLed() {
 #ifdef DECK_LED_R
   static uint32_t lastUpdate = 0;
   if (millis() - lastUpdate < 100) return;
   lastUpdate = millis();
 #ifdef DECK_UI_V2
+  if (!settings.ledOn || ledNightNow()) {
+    setLed(0, 0, 0);
+    return;
+  }
   if (static_cast<int32_t>(notifyFlashUntil - millis()) > 0) {
     setLed(0, 0, LED_LEVEL * 6);
     return;
@@ -818,6 +909,11 @@ void handleTouch() {
   if (!readTouch(&x, &y)) return;
   lastTouchMs = millis();
 #ifdef DECK_UI_V2
+  if (noteActivity()) {  // the waking touch only turns the screen on
+    waitForRelease();
+    lastTouchMs = millis();
+    return;
+  }
   uiHandleTouchV2(x, y);
   return;
 #endif
@@ -990,9 +1086,16 @@ void handleInfo(JsonDocument &doc) {
 
 #ifdef DECK_UI_V2
 // Adds a notification from any source and alerts the user (banner + blue LED).
+// Muted sources/apps are dropped; in quiet hours it is stored without banner, LED or wake.
 void addNotification(NotifySource source, const String &app, const String &from, const String &body) {
+  if (!notificationAllowed(settings, source, app)) return;
   notifyStore.add(source, app, from, body, millis());
+  if (quietNow()) {
+    uiNotificationQuiet();
+    return;
+  }
   notifyFlashUntil = millis() + 300;
+  noteActivity();
   uiNotificationArrived();
 }
 
@@ -1011,6 +1114,7 @@ void handleCoin(JsonDocument &doc) {
     row.change = readFloat(item["c"], 0.0f);
   }
   copyText(coins.time, sizeof(coins.time), doc["time"]);
+  copyText(coins.date, sizeof(coins.date), doc["date"]);
   coins.has = true;
   uiInfoFeedChanged(1);
 }
@@ -1037,6 +1141,7 @@ void handleStock(JsonDocument &doc) {
   }
   stocks.open = readFloat(doc["open"], 0.0f);
   copyText(stocks.time, sizeof(stocks.time), doc["time"]);
+  copyText(stocks.date, sizeof(stocks.date), doc["date"]);
   stocks.has = true;
   uiInfoFeedChanged(2);
 }
@@ -1060,6 +1165,7 @@ void handleWeather(JsonDocument &doc) {
     day.icon = item["icon"] | 2;
   }
   copyText(weather.time, sizeof(weather.time), doc["time"]);
+  copyText(weather.date, sizeof(weather.date), doc["date"]);
   weather.has = true;
   uiInfoFeedChanged(3);
 }
@@ -1239,15 +1345,23 @@ void setup() {
   for (Icon &icon : macroIcon) icon = Icon::Controls;
   for (int8_t &color : macroColor) color = -1;
 #endif
+#ifdef DECK_UI_V2
+  loadSettings();
+#endif
   tft.init();
   tft.setRotation(DISPLAY_ROTATION);
   setupTouchCalibration();
+#ifdef DECK_UI_V2
+  applyRotation();
+  setupBacklight();  // after tft.init(), which drives TFT_BL as a plain output
+  lastActivityMs = millis();
+#endif
   renderFull();
 
   JsonDocument hello;
   hello["type"] = "hello";
   hello["device"] = "ESP32 PC Control Deck";
-  hello["firmware"] = "0.3.3";
+  hello["firmware"] = FIRMWARE_VERSION;
   hello["protocol"] = PROTOCOL_VERSION;
   sendFrame(hello);
 #ifdef DECK_UI_V2
@@ -1265,6 +1379,7 @@ void loop() {
   updatePhoneLink();
   netLoop();
   updatePcLink();
+  updateScreenSleep();
 #endif
 
   if (fullRedrawRequested) {

@@ -13,3 +13,6 @@ String stockPriceText(double thousandVnd);
 
 // 0.44 -> "+0.44%", -5.11 -> "-5.11%".
 String signedPercent(double value);
+
+// "Updated" stamp: "HH:MM" when the data is from today, "dd/mm HH:MM" otherwise.
+String updatedText(const char *date, const char *time, const String &today);

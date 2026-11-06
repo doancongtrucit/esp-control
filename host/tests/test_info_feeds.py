@@ -156,6 +156,14 @@ class WeatherTests(unittest.TestCase):
         self.assertTrue(frame["desc"])
 
 
+class FrameDateTests(unittest.TestCase):
+    def test_every_feed_frame_carries_its_date(self):
+        feeds = info_feeds.InfoFeeds(CONFIG, http=FakeHttp(), now=lambda: TRADING)
+        for kind in feeds.KINDS:
+            feeds.refresh(kind)
+            self.assertEqual("06/11", feeds.snapshot()[kind][1]["date"], kind)
+
+
 class FeedErrorTests(unittest.TestCase):
     def test_feed_error_keeps_previous_frame(self):
         http = FakeHttp()

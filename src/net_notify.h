@@ -28,3 +28,5 @@ bool netConnected();
 String netIp();
 uint16_t netPort();
 uint32_t netRejectedCount();
+int netRssi();     // dBm, 0 when not connected
+void netForget();  // erases saved Wi-Fi credentials and token

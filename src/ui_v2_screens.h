@@ -7,7 +7,6 @@ enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Ai
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
-bool hideNotifyText = false;
 bool bannerActive = false;
 uint32_t bannerUntil = 0;
 constexpr uint32_t BANNER_MS = 2500;
@@ -167,10 +166,20 @@ void drawHomeFooter() {
   }
 }
 
+// Everything the status bar and footer show; they repaint only when it changes.
+String homeChromeKey() {
+  int d = 0, m = 0, y = 0;
+  deckDate(d, m, y);
+  return currentClockText() + d + "/" + m + (usbLive() ? "U" : "u") + (phoneLinkUp ? "P" : "p") +
+         (pcLinkUp ? "W" : "w");
+}
+String drawnHomeKey;
+
 void drawHomeV2() {
   drawHomeStatusBar();
   for (int i = 0; i < 8; ++i) drawHomeApp(i);
   drawHomeFooter();
+  drawnHomeKey = homeChromeKey();
 }
 
 void touchHomeV2(uint16_t x, uint16_t y) {
@@ -383,21 +392,23 @@ constexpr InfoTabSpec INFO_TAB_SPECS[INFO_TABS] = {
 constexpr int TAB_X = 6, TAB_Y = UI_HEADER_H + 1, TAB_W = 308, TAB_H = 30, TAB_GAP = 3;
 constexpr int INFO_Y = TAB_Y + TAB_H;  // 63
 
-void drawInfoTabs() {
+void drawTabStrip(const InfoTabSpec *specs, int count, int activeTab) {
   tft.fillRect(0, TAB_Y, UI_SCREEN_W, TAB_H, T_BG);
-  for (int i = 0; i < INFO_TABS; ++i) {
-    const CellRect c = gridCellIn(i, INFO_TABS, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
-    const bool active = i == infoTab;
+  for (int i = 0; i < count; ++i) {
+    const CellRect c = gridCellIn(i, count, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
+    const bool active = i == activeTab;
     const uint16_t bg = active ? T_CARD : T_BG;
     const uint16_t fg = active ? T_TEXT : T_MUTED;
     tft.fillRoundRect(c.x, c.y, c.w, c.h + 4, 6, bg);  // +4: square bottom joins the content
-    if (active) tft.fillRect(c.x, c.y + c.h - 2, c.w, 2, rgb565(INFO_TAB_SPECS[i].line));
-    drawIcon(tft, INFO_TAB_SPECS[i].icon, c.x + (c.w - 12) / 2, c.y + 2, 12, fg, bg);
+    if (active) tft.fillRect(c.x, c.y + c.h - 2, c.w, 2, rgb565(specs[i].line));
+    drawIcon(tft, specs[i].icon, c.x + (c.w - 12) / 2, c.y + 2, 12, fg, bg);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(fg, bg);
-    tft.drawString(INFO_TAB_SPECS[i].label, c.x + c.w / 2, c.y + 21, 1);
+    tft.drawString(specs[i].label, c.x + c.w / 2, c.y + 21, 1);
   }
 }
+
+void drawInfoTabs() { drawTabStrip(INFO_TAB_SPECS, INFO_TABS, infoTab); }
 
 void drawInfoEmpty(const char *message) {
   tft.setTextDatum(MC_DATUM);
@@ -537,13 +548,23 @@ void drawCalendarTab() {
 
 // ---------- Info: Coin, Stock, Weather ----------
 
-void drawInfoFooter(const String &left, const char *updated) {
+// "dd/mm" of the PC date, empty before the bridge sends one.
+String todayText() {
+  int d, m, y;
+  if (!deckDate(d, m, y)) return "";
+  char text[6];
+  snprintf(text, sizeof(text), "%02d/%02d", d, m);
+  return text;
+}
+
+void drawInfoFooter(const String &left, const char *date, const char *time) {
+  const String updated = updatedText(date, time, todayText());
   constexpr int footY = UI_INFO_FOOTER_Y;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
   tft.drawString(left, 10, footY, 1);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString(String("Updated ") + updated, UI_SCREEN_W - 10, footY, 1);
+  tft.drawString("Updated " + updated, UI_SCREEN_W - 10, footY, 1);
 }
 
 uint16_t changeColorFor(float change) { return change > 0 ? T_UP : (change < 0 ? T_DOWN : T_MUTED); }
@@ -580,7 +601,7 @@ void drawCoinTab() {
     tft.setTextColor(changeColorFor(row.change), T_CARD);
     tft.drawString(signedPercent(row.change), UI_SCREEN_W - 10, mid, 2);
   }
-  drawInfoFooter("USD - 24h change", coins.time);
+  drawInfoFooter("USD - 24h change", coins.date, coins.time);
 }
 
 void drawSparkline(int x, int y, int w, int h) {
@@ -640,7 +661,7 @@ void drawStockTab() {
   for (int i = 0; i < stocks.itemCount && y < 214; ++i, y += 23) {
     drawQuoteRow(y, stocks.items[i].name, "VND", stockPriceText(stocks.items[i].value), stocks.items[i].change);
   }
-  drawInfoFooter("VPS - HOSE / HNX", stocks.time);
+  drawInfoFooter("VPS - HOSE / HNX", stocks.date, stocks.time);
 }
 
 // Weather icon ids from the bridge: 0 sun, 1 partly, 2 cloud, 3 rain, 4 storm, 5 fog.
@@ -692,7 +713,7 @@ void drawWeatherTab() {
       tft.drawString(String(day.rain) + "%", cx, c.y + 86, 2);
     }
   }
-  drawInfoFooter("Open-Meteo", weather.time);
+  drawInfoFooter("Open-Meteo", weather.date, weather.time);
 }
 
 // ---------- Info: screen ----------
@@ -756,7 +777,7 @@ void drawNotifyRow(int index) {
   tft.drawRoundRect(14, y + 9, 22, 22, 5, T_BORDER);
   drawIcon(tft, n.source == NotifySource::Phone ? Icon::Phone : Icon::Monitor, 18, y + 13, 14, T_INK, bg);
   drawViText(tft, NOTIFY_TEXT_X, y + 3, fitViText(notifyTitle(n), NOTIFY_TEXT_W), T_INK, bg);
-  const String body = hideNotifyText ? String("Content hidden") : n.body;
+  const String body = settings.hideBody ? String("Content hidden") : n.body;
   drawViText(tft, NOTIFY_TEXT_X, y + 21, fitViText(body, NOTIFY_TEXT_W), T_MUTED, bg);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_MUTED, bg);
@@ -764,12 +785,12 @@ void drawNotifyRow(int index) {
 }
 
 void drawNotifyHideToggle() {
-  const uint16_t bg = hideNotifyText ? T_ACCENT : T_CARD;
+  const uint16_t bg = settings.hideBody ? T_ACCENT : T_CARD;
   tft.fillRect(STATUS_X, 0, UI_SCREEN_W - STATUS_X, UI_HEADER_H - 1, T_BG);
   tft.fillRoundRect(STATUS_X + 2, 4, UI_SCREEN_W - STATUS_X - 8, 24, 6, bg);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(hideNotifyText ? T_ON_ACCENT : T_TEXT, bg);
-  tft.drawString(hideNotifyText ? "HIDE: ON" : "HIDE: OFF", (STATUS_X + UI_SCREEN_W - 6) / 2, 16, 2);
+  tft.setTextColor(settings.hideBody ? T_ON_ACCENT : T_TEXT, bg);
+  tft.drawString(settings.hideBody ? "HIDE: ON" : "HIDE: OFF", (STATUS_X + UI_SCREEN_W - 6) / 2, 16, 2);
 }
 
 void drawNotifyV2() {
@@ -790,7 +811,8 @@ void drawNotifyV2() {
 
 void touchNotifyV2(uint16_t x, uint16_t y) {
   if (y < UI_HEADER_H && x >= STATUS_X) {
-    hideNotifyText = !hideNotifyText;
+    settings.hideBody = !settings.hideBody;
+    saveSettings();
     fullRedrawRequested = true;
   }
 }
@@ -803,8 +825,13 @@ void drawBannerV2() {
   tft.drawRect(1, 1, UI_SCREEN_W - 2, BANNER_H - 2, T_ACCENT);
   drawIcon(tft, n.source == NotifySource::Phone ? Icon::Phone : Icon::Monitor, 8, 12, 16, T_INK, T_ALERT_BG);
   drawViText(tft, 30, 3, fitViText(notifyTitle(n), 280), T_INK, T_ALERT_BG);
-  const String body = hideNotifyText ? String("Content hidden") : n.body;
+  const String body = settings.hideBody ? String("Content hidden") : n.body;
   drawViText(tft, 30, 20, fitViText(body, 280), T_MUTED, T_ALERT_BG);
+}
+
+// Quiet hours: listed silently, the Home tile's badge still updates.
+void uiNotificationQuiet() {
+  if (screen == Screen::Notify) fullRedrawRequested = true;
 }
 
 void uiNotificationArrived() {
@@ -826,6 +853,296 @@ void drawPlaceholderV2(const char *title) {
   tft.drawString("Coming in phase 2", UI_SCREEN_W / 2, 136, 2);
 }
 
+// ---------- Settings ----------
+
+enum SettingsTab : uint8_t { SET_DISPLAY, SET_NOTIFY, SET_CONNECT, SET_DEVICE, SET_TABS };
+uint8_t settingsTab = SET_DISPLAY;
+constexpr InfoTabSpec SET_TAB_SPECS[SET_TABS] = {
+    {"Display", Icon::Sun, 0xffd60a},
+    {"Notify", Icon::Bell, 0xff375f},
+    {"Connect", Icon::Wifi, 0x0a84ff},
+    {"Device", Icon::Chip, 0x8e8e93},
+};
+// Five 30 px rows under the tab strip; controls sit in the right part of a row.
+constexpr int SET_ROWS = 5;
+constexpr int SET_ROW_X = 8, SET_ROW_W = UI_SCREEN_W - 16, SET_ROW_H = 30, SET_ROW_STEP = 34;
+constexpr int SET_ROW_Y0 = INFO_Y + 4;  // 67
+constexpr int SET_HALF_W = (SET_ROW_W - 6) / 2;
+constexpr int SET_RIGHT_X = SET_ROW_X + SET_HALF_W + 6;
+constexpr int SET_CTRL_X = 120;
+constexpr int SET_CTRL_W = SET_ROW_X + SET_ROW_W - 6 - SET_CTRL_X;
+// Quiet hours row: start box, end box, then the switch.
+constexpr int QUIET_START_X = 84, QUIET_END_X = 156, QUIET_BOX_W = 56;
+const char *const SLEEP_LABELS[SLEEP_OPTIONS] = {"Never", "1 min", "5 min", "15 min"};
+String settingsCache[SET_ROWS];
+
+int setRowY(int row) { return SET_ROW_Y0 + row * SET_ROW_STEP; }
+
+void drawSetRow(int row, const char *label, int x = SET_ROW_X, int w = SET_ROW_W) {
+  const int y = setRowY(row);
+  tft.fillRoundRect(x, y, w, SET_ROW_H, 7, T_CARD_ALT);
+  if (!label) return;
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_TEXT, T_CARD_ALT);
+  tft.drawString(label, x + 10, y + SET_ROW_H / 2, 2);
+}
+
+// Pill switch whose right edge is `right`.
+void drawSwitch(int right, int row, bool on) {
+  constexpr int w = 40, h = 20;
+  const int x = right - w - 6;
+  const int top = setRowY(row) + (SET_ROW_H - h) / 2;
+  tft.fillRoundRect(x, top, w, h, h / 2, on ? T_UP : T_LINE);
+  tft.fillCircle(on ? x + w - h / 2 : x + h / 2, top + h / 2, h / 2 - 3, T_TEXT);
+}
+
+void drawSwitchRow(int row, const char *label, bool on, int x = SET_ROW_X, int w = SET_ROW_W) {
+  drawSetRow(row, label, x, w);
+  drawSwitch(x + w, row, on);
+}
+
+// Segmented control in the controls column; `fill` lights every segment up to `active`.
+void drawSegments(int row, const char *const *labels, int n, int active, bool fill) {
+  const int y = setRowY(row) + 4;
+  for (int i = 0; i < n; ++i) {
+    const CellRect c = gridCellIn(i, n, 1, SET_CTRL_X, y, SET_CTRL_W, SET_ROW_H - 8, 3);
+    const bool on = fill ? i <= active : i == active;
+    const uint16_t bg = on ? (fill ? T_GOLD : T_LINK) : T_LINE;
+    tft.fillRoundRect(c.x, c.y, c.w, c.h, 5, bg);
+    if (!labels) continue;
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(on ? T_TEXT : T_MUTED, bg);
+    tft.drawString(labels[i], c.x + c.w / 2, c.y + c.h / 2 + 1, 1);
+  }
+}
+
+int segmentAt(int x, int n) {
+  if (x < SET_CTRL_X) return -1;
+  return min(n - 1, (x - SET_CTRL_X) * n / SET_CTRL_W);
+}
+
+// Info row: label on the left, value on the right; repainted only when the value changes.
+void drawValueRow(int row, const char *label, const String &value, uint16_t color = T_MUTED) {
+  if (settingsCache[row] == value) return;
+  settingsCache[row] = value;
+  drawSetRow(row, label);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(color, T_CARD_ALT);
+  tft.drawString(value, SET_ROW_X + SET_ROW_W - 10, setRowY(row) + SET_ROW_H / 2, 2);
+}
+
+void drawActionRow(int row, const char *label, uint16_t color, int x = SET_ROW_X, int w = SET_ROW_W) {
+  drawSetRow(row, nullptr, x, w);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(color, T_CARD_ALT);
+  tft.drawString(label, x + w / 2, setRowY(row) + SET_ROW_H / 2, 2);
+}
+
+String hourText(uint8_t hour) {
+  char text[6];
+  snprintf(text, sizeof(text), "%02u:00", hour);
+  return text;
+}
+
+void drawQuietBox(int x, uint8_t hour, bool on) {
+  const int y = setRowY(2) + 4;
+  tft.fillRoundRect(x, y, QUIET_BOX_W, SET_ROW_H - 8, 5, T_LINE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(on ? T_TEXT : T_MUTED, T_LINE);
+  tft.drawString(hourText(hour), x + QUIET_BOX_W / 2, y + (SET_ROW_H - 8) / 2 + 1, 2);
+}
+
+void drawAppChip(int i) {
+  const CellRect c = gridCellIn(i, 4, 2, SET_ROW_X, setRowY(3), SET_ROW_W, SET_ROW_H * 2 + 4, 4);
+  const bool muted = settings.mutedApps & (1u << i);
+  const uint16_t bg = muted ? T_BG : T_CARD_ALT;
+  tft.fillRoundRect(c.x, c.y, c.w, c.h, 7, bg);
+  if (muted) tft.drawRoundRect(c.x, c.y, c.w, c.h, 7, T_LINE);
+  tft.fillCircle(c.x + 9, c.y + c.h / 2, 3, muted ? T_DOWN : T_UP);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(muted ? T_MUTED : T_TEXT, bg);
+  tft.drawString(NOTIFY_APPS[i], c.x + 17, c.y + c.h / 2, 1);
+}
+
+String uptimeText() {
+  const uint32_t minutes = millis() / 60000UL;
+  if (minutes < 60) return String(minutes) + " min";
+  if (minutes < 1440) return String(minutes / 60) + "h " + String(minutes % 60) + "m";
+  return String(minutes / 1440) + "d " + String(minutes / 60 % 24) + "h";
+}
+
+void drawConnectValues() {
+  drawValueRow(0, "Wi-Fi", pcLinkUp ? "Connected  " + String(netRssi()) + " dBm" : String("Not connected"),
+               pcLinkUp ? T_UP : T_DOWN);
+  drawValueRow(1, "Address", pcLinkUp ? netIp() + ":" + String(netPort()) : String("-"));
+  drawValueRow(2, "iPhone", ancsReady() ? "Ready" : (ancsConnected() ? "Pairing..." : "Waiting"),
+               ancsReady() ? T_UP : T_MUTED);
+  drawValueRow(3, "PC (USB)", usbLive() ? "Online" : "Offline", usbLive() ? T_UP : T_DOWN);
+}
+
+void drawDeviceValues() {
+  drawValueRow(1, "Firmware", FIRMWARE_VERSION);
+  drawValueRow(2, "Uptime", uptimeText());
+  drawValueRow(3, "Free RAM", String(ESP.getFreeHeap() / 1024) + " KB");
+}
+
+void drawSettingsV2() {
+  drawHeaderV2("SETTINGS", true);
+  drawTabStrip(SET_TAB_SPECS, SET_TABS, settingsTab);
+  tft.fillRect(0, INFO_Y, UI_SCREEN_W, UI_SCREEN_H - INFO_Y, T_CARD);
+  for (String &cached : settingsCache) cached = "";
+  switch (settingsTab) {
+    case SET_DISPLAY:
+      drawSetRow(0, "Brightness");
+      drawSegments(0, nullptr, BRIGHTNESS_LEVELS, settings.brightness, true);
+      drawSetRow(1, "Screen off");
+      drawSegments(1, SLEEP_LABELS, SLEEP_OPTIONS, settings.sleepIndex, false);
+      drawSwitchRow(2, "Flip 180", settings.rotate180);
+      tft.setTextDatum(ML_DATUM);
+      tft.setTextColor(T_MUTED, T_CARD);
+      tft.drawString("Tap the screen to wake it after it turns off.", SET_ROW_X + 2, setRowY(3) + 10, 1);
+      break;
+    case SET_NOTIFY:
+      drawSwitchRow(0, "iPhone", settings.phoneOn, SET_ROW_X, SET_HALF_W);
+      drawSwitchRow(0, "PC", settings.pcOn, SET_RIGHT_X, SET_HALF_W);
+      drawSwitchRow(1, "Hide content", settings.hideBody);
+      drawSwitchRow(2, "Quiet", settings.quietOn);
+      drawQuietBox(QUIET_START_X, settings.quietStart, settings.quietOn);
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(T_MUTED, T_CARD_ALT);
+      tft.drawString("-", (QUIET_START_X + QUIET_BOX_W + QUIET_END_X) / 2, setRowY(2) + SET_ROW_H / 2, 2);
+      drawQuietBox(QUIET_END_X, settings.quietEnd, settings.quietOn);
+      for (int i = 0; i < NOTIFY_APP_COUNT; ++i) drawAppChip(i);
+      break;
+    case SET_CONNECT:
+      drawConnectValues();
+      drawActionRow(4, "Hold: forget iPhone", T_DOWN);
+      break;
+    case SET_DEVICE:
+      drawSwitchRow(0, "LED", settings.ledOn, SET_ROW_X, SET_HALF_W);
+      drawSwitchRow(0, "Night off", settings.ledNight, SET_RIGHT_X, SET_HALF_W);
+      drawDeviceValues();
+      drawActionRow(4, "Hold: restart", T_TEXT, SET_ROW_X, SET_HALF_W);
+      drawActionRow(4, "Hold: reset all", T_DOWN, SET_RIGHT_X, SET_HALF_W);
+      break;
+    default: break;
+  }
+}
+
+// A bar fills along the bottom of the button while the finger stays on it.
+bool holdRect(int x, int row, int w) {
+  const int barY = setRowY(row) + SET_ROW_H - 5;
+  const uint32_t start = millis();
+  int misses = 0;
+  while (millis() - start < HOLD_CONFIRM_MS) {
+    misses = touchHeld() ? 0 : misses + 1;
+    if (misses >= 3) {
+      fullRedrawRequested = true;
+      return false;
+    }
+    tft.fillRect(x + 8, barY, (w - 16) * (millis() - start) / HOLD_CONFIRM_MS, 3, T_TEXT);
+    delay(20);
+  }
+  return true;
+}
+
+[[noreturn]] void restartWithMessage(const char *line1, const char *line2) {
+  tft.fillRect(0, INFO_Y, UI_SCREEN_W, UI_SCREEN_H - INFO_Y, T_CARD);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_TEXT, T_CARD);
+  tft.drawString(line1, UI_SCREEN_W / 2, 130, 2);
+  tft.setTextColor(T_MUTED, T_CARD);
+  tft.drawString(line2, UI_SCREEN_W / 2, 154, 1);
+  delay(2500);
+  ESP.restart();
+  while (true) delay(10);
+}
+
+void touchSettingsV2(uint16_t x, uint16_t y) {
+  const int tab = gridIndexIn(x, y, SET_TABS, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
+  if (tab >= 0) {
+    if (tab != settingsTab) {
+      settingsTab = tab;
+      fullRedrawRequested = true;
+    }
+    return;
+  }
+  if (y < SET_ROW_Y0) return;
+  const int row = (y - SET_ROW_Y0) / SET_ROW_STEP;
+  if (row >= SET_ROWS || (y - SET_ROW_Y0) % SET_ROW_STEP >= SET_ROW_H) return;
+  const bool right = x >= SET_RIGHT_X;
+  bool changed = true;
+  switch (settingsTab) {
+    case SET_DISPLAY:
+      if (row == 0 && segmentAt(x, BRIGHTNESS_LEVELS) >= 0) {
+        settings.brightness = segmentAt(x, BRIGHTNESS_LEVELS);
+        applyBacklight();
+      } else if (row == 1 && segmentAt(x, SLEEP_OPTIONS) >= 0) {
+        settings.sleepIndex = segmentAt(x, SLEEP_OPTIONS);
+        lastActivityMs = millis();
+      } else if (row == 2) {
+        settings.rotate180 = !settings.rotate180;
+        applyRotation();
+      } else {
+        changed = false;
+      }
+      break;
+    case SET_NOTIFY:
+      if (row == 0) {
+        bool &on = right ? settings.pcOn : settings.phoneOn;
+        on = !on;
+      } else if (row == 1) {
+        settings.hideBody = !settings.hideBody;
+      } else if (row == 2) {
+        if (x >= QUIET_START_X && x < QUIET_START_X + QUIET_BOX_W) {
+          settings.quietStart = (settings.quietStart + 1) % 24;
+        } else if (x >= QUIET_END_X && x < QUIET_END_X + QUIET_BOX_W) {
+          settings.quietEnd = (settings.quietEnd + 1) % 24;
+        } else {
+          settings.quietOn = !settings.quietOn;
+        }
+      } else {
+        const int app = gridIndexIn(x, y, 4, 2, SET_ROW_X, setRowY(3), SET_ROW_W, SET_ROW_H * 2 + 4, 4);
+        if (app >= 0) {
+          settings.mutedApps ^= 1u << app;
+        } else {
+          changed = false;
+        }
+      }
+      break;
+    case SET_CONNECT:
+      changed = false;
+      if (row == 4 && holdRect(SET_ROW_X, 4, SET_ROW_W)) {
+        ancsForgetPairing();
+        restartWithMessage("iPhone forgotten", "Also tap Forget This Device on the iPhone.");
+      }
+      break;
+    case SET_DEVICE:
+      if (row == 0) {
+        bool &on = right ? settings.ledNight : settings.ledOn;
+        on = !on;
+      } else if (row == 4) {
+        changed = false;
+        if (!right && holdRect(SET_ROW_X, 4, SET_HALF_W)) restartWithMessage("Restarting...", "");
+        if (right && holdRect(SET_RIGHT_X, 4, SET_HALF_W)) {
+          clearSettings();
+          netForget();
+          ancsForgetPairing();
+          restartWithMessage("Settings reset", "The bridge sets Wi-Fi up again over USB.");
+        }
+      } else {
+        changed = false;
+      }
+      break;
+    default:
+      changed = false;
+      break;
+  }
+  if (!changed) return;
+  saveSettings();
+  fullRedrawRequested = true;
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -842,7 +1159,7 @@ void uiRenderFullV2() {
     case Screen::AiTools: drawPlaceholderV2("AI TOOLS"); break;
     case Screen::AiGpu: drawPlaceholderV2("AI GPU"); break;
     case Screen::Notify: drawNotifyV2(); break;
-    case Screen::Settings: drawPlaceholderV2("SETTINGS"); break;
+    case Screen::Settings: drawSettingsV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -857,9 +1174,22 @@ void uiRenderDynamicV2() {
   }
   drawHeaderStatusV2();
   if (screen == Screen::Monitor) drawMonitorV2Dynamic();
+  // A new day: the calendar's "today" moves.
+  static int drawnDay = -1;
+  int d, m, y;
+  if (deckDate(d, m, y) && d != drawnDay) {
+    if (drawnDay >= 0 && screen == Screen::Info && infoTab == TAB_CALENDAR) fullRedrawRequested = true;
+    drawnDay = d;
+  }
+  if (screen == Screen::Settings && settingsTab == SET_CONNECT) drawConnectValues();
+  if (screen == Screen::Settings && settingsTab == SET_DEVICE) drawDeviceValues();
   if (screen == Screen::Home) {
-    if (!bannerActive) drawHomeStatusBar();  // the banner covers the status bar
-    drawHomeFooter();
+    // The banner covers the status bar; the full redraw after it repaints both.
+    if (!bannerActive && homeChromeKey() != drawnHomeKey) {
+      drawHomeStatusBar();
+      drawHomeFooter();
+      drawnHomeKey = homeChromeKey();
+    }
     if (drawnNotifyVersion != notifyStore.version()) {
       drawHomeApp(NOTIFY_APP);
       if (bannerActive) drawBannerV2();  // the top app row runs under the banner
@@ -882,6 +1212,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Controls: touchControlsV2(x, y); break;
     case Screen::Notify: touchNotifyV2(x, y); break;
     case Screen::Info: touchInfoV2(x, y); break;
+    case Screen::Settings: touchSettingsV2(x, y); break;
     default: break;
   }
 }

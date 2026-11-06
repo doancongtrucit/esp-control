@@ -117,4 +117,13 @@ bool netConnected() { return settings.ssid.length() && WiFi.status() == WL_CONNE
 String netIp() { return netConnected() ? WiFi.localIP().toString() : String(); }
 uint16_t netPort() { return settings.port; }
 uint32_t netRejectedCount() { return rejected; }
+int netRssi() { return netConnected() ? WiFi.RSSI() : 0; }
+
+void netForget() {
+  Preferences prefs;
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.clear();
+  prefs.end();
+}
+
 #endif  // DECK_UI_V2
