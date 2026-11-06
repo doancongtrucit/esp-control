@@ -1311,6 +1311,18 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
   }
 }
 
+// Horizontal swipe: next (+1) or previous (-1) tab / page inside the current app.
+void uiSwipeV2(int step) {
+  switch (screen) {
+    case Screen::Info: infoTab = (infoTab + INFO_TABS + step) % INFO_TABS; break;
+    case Screen::Settings: settingsTab = (settingsTab + SET_TABS + step) % SET_TABS; break;
+    case Screen::Controls: controlsPage = (controlsPage + MACRO_PAGES + step) % MACRO_PAGES; break;
+    case Screen::Standby: uiShow(Screen::Home); return;
+    default: return;
+  }
+  fullRedrawRequested = true;
+}
+
 void uiConfigChanged() {
   if (screen == Screen::Controls) fullRedrawRequested = true;
 }

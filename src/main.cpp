@@ -14,6 +14,7 @@
 #include "color_util.h"
 #include "deck_settings.h"
 #include "format_util.h"
+#include "gesture.h"
 #include "icons.h"
 #include "lunar.h"
 #include "net_notify.h"
@@ -83,6 +84,13 @@ constexpr uint32_t TOUCH_STABLE_MS = 40;
 constexpr int TOUCH_MAX_JITTER = 150;  // raw units
 #endif
 
+#ifdef DECK_CYD_TOUCH
+void mapTouchPoint(const TS_Point &p, uint16_t *x, uint16_t *y) {
+  *x = constrain(map(p.x, TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
+  *y = constrain(map(p.y, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, 0, SCREEN_H - 1), 0, SCREEN_H - 1);
+}
+#endif
+
 bool readTouch(uint16_t *x, uint16_t *y) {
 #ifdef DECK_CYD_TOUCH
   if (!ts.tirqTouched() || !ts.touched()) return false;
@@ -95,13 +103,23 @@ bool readTouch(uint16_t *x, uint16_t *y) {
       abs(p.y - first.y) > TOUCH_MAX_JITTER) {
     return false;
   }
-  *x = constrain(map(p.x, TOUCH_RAW_X_MIN, TOUCH_RAW_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
-  *y = constrain(map(p.y, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, 0, SCREEN_H - 1), 0, SCREEN_H - 1);
+  mapTouchPoint(p, x, y);
   return true;
 #else
   return tft.getTouch(x, y);
 #endif
 }
+
+#ifdef DECK_CYD_TOUCH
+// Current finger position without the stability wait (used while tracking a swipe).
+bool touchPosition(uint16_t *x, uint16_t *y) {
+  if (!ts.touched()) return false;
+  const TS_Point p = ts.getPoint();
+  if (p.z < TOUCH_MIN_Z) return false;
+  mapTouchPoint(p, x, y);
+  return true;
+}
+#endif
 
 // True while a finger is still on the panel (used by hold-to-confirm).
 bool touchHeld() {
@@ -901,6 +919,39 @@ void updateStatusLed() {
 #include "ui_v2_screens.h"
 #endif
 
+#if defined(DECK_UI_V2) && defined(DECK_CYD_TOUCH)
+// Follows the finger from (x0, y0) until it is a tap (at the start point) or a horizontal swipe.
+void trackGesture(uint16_t x0, uint16_t y0) {
+  const uint32_t start = millis();
+  uint16_t x = x0, y = y0;
+  int dx = 0, dy = 0, misses = 0;
+  while (true) {
+    bool released = false;
+    if (touchPosition(&x, &y)) {
+      misses = 0;
+      dx = static_cast<int>(x) - x0;
+      dy = static_cast<int>(y) - y0;
+    } else if (++misses >= 3) {  // resistive panels drop out for a sample now and then
+      released = true;
+    }
+    const Gesture gesture = classifyGesture(dx, dy, millis() - start, released);
+    if (gesture == Gesture::Pending) {
+      delay(10);
+      continue;
+    }
+    if (gesture == Gesture::Tap) {
+      uiHandleTouchV2(x0, y0);
+    } else {
+      if (gesture == Gesture::SwipeLeft) uiSwipeV2(1);
+      if (gesture == Gesture::SwipeRight) uiSwipeV2(-1);
+      waitForRelease();
+    }
+    lastTouchMs = millis();
+    return;
+  }
+}
+#endif
+
 void handleTouch() {
   if (millis() - lastTouchMs < TOUCH_DEBOUNCE_MS) return;
 
@@ -914,7 +965,11 @@ void handleTouch() {
     lastTouchMs = millis();
     return;
   }
+#ifdef DECK_CYD_TOUCH
+  trackGesture(x, y);
+#else
   uiHandleTouchV2(x, y);
+#endif
   return;
 #endif
 
