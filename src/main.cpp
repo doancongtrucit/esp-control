@@ -31,6 +31,12 @@ constexpr int BACKLIGHT_PIN = DECK_BACKLIGHT_PIN;
 #else
 constexpr int BACKLIGHT_PIN = 27;
 #endif
+// Landscape: 1 = USB on the right, 3 = turned 180 degrees (USB on the left).
+#ifdef DECK_ROTATION
+constexpr uint8_t DISPLAY_ROTATION = DECK_ROTATION;
+#else
+constexpr uint8_t DISPLAY_ROTATION = 1;
+#endif
 constexpr uint32_t STALE_AFTER_MS = 15000;
 constexpr uint32_t TOUCH_DEBOUNCE_MS = 300;
 constexpr char PROTOCOL_PREFIX[] = "DD:";
@@ -1190,7 +1196,7 @@ void setupTouchCalibration() {
   // Fixed raw-to-screen mapping instead of TFT_eSPI's shared-bus calibration.
   touchSpi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS_PIN);
   ts.begin(touchSpi);
-  ts.setRotation(1);
+  ts.setRotation(DISPLAY_ROTATION);  // touch turns with the picture
 #else
   uint16_t calData[5] = {0};
   const size_t length = prefs.getBytesLength("touchcal");
@@ -1234,7 +1240,7 @@ void setup() {
   for (int8_t &color : macroColor) color = -1;
 #endif
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(DISPLAY_ROTATION);
   setupTouchCalibration();
   renderFull();
 
