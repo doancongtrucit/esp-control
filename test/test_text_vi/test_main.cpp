@@ -2,6 +2,9 @@
 #include <unity.h>
 
 #include "text_vi.h"
+#include "ui_font.h"
+
+TFT_eSPI tft;  // widths come from the Noto metrics; the panel is never initialised
 
 void test_keeps_vietnamese_diacritics() {
   TEST_ASSERT_EQUAL_STRING("Đi ngủ đi", sanitizeVi("Đi ngủ đi", 40).c_str());
@@ -52,8 +55,15 @@ void test_fit_cuts_to_pixel_width_with_ellipsis() {
   TEST_ASSERT_TRUE(fitted.startsWith("Nguy"));
 }
 
+void test_letters_outside_the_font_are_dropped() {
+  // Latin Extended-B beyond the Vietnamese horn letters is not in the Noto arrays.
+  TEST_ASSERT_EQUAL_STRING("ao", sanitizeVi("aǎo", 20).c_str());
+  TEST_ASSERT_EQUAL_STRING("ơưă", sanitizeVi("ơưă", 20).c_str());  // ơ ư ă kept
+}
+
 void setup() {
   delay(2000);
+  uiFontBegin(tft);
   UNITY_BEGIN();
   RUN_TEST(test_keeps_vietnamese_diacritics);
   RUN_TEST(test_drops_emoji_and_trims);
@@ -64,6 +74,7 @@ void setup() {
   RUN_TEST(test_font_has_every_vietnamese_letter);
   RUN_TEST(test_fit_keeps_short_text);
   RUN_TEST(test_fit_cuts_to_pixel_width_with_ellipsis);
+  RUN_TEST(test_letters_outside_the_font_are_dropped);
   UNITY_END();
 }
 

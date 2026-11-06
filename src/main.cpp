@@ -10,6 +10,8 @@
 #include <XPT2046_Touchscreen.h>
 #endif
 #ifdef DECK_UI_V2
+#include <base64.h>
+
 #include "ancs.h"
 #include "color_util.h"
 #include "deck_settings.h"
@@ -21,6 +23,7 @@
 #include "notify_store.h"
 #include "text_vi.h"
 #include "theme.h"
+#include "ui_font.h"
 #include "ui_layout.h"
 #endif
 
@@ -1271,6 +1274,29 @@ void handleWifi(JsonDocument &doc) {
   sendWifiStatus();
 }
 
+// Dev aid: {"type":"shot","screen":"info","tab":2} opens that screen and streams it back,
+// one base64 row of big-endian RGB565 per line (tools/deck_screenshot.py turns it into a PNG).
+void handleShot(JsonDocument &doc) {
+  uiOpenForShot(doc["screen"] | "", doc["tab"] | -1);
+  renderFull();
+  static uint16_t row[SCREEN_W];
+  uint8_t bytes[SCREEN_W * 2];
+  for (int y = 0; y < SCREEN_H; ++y) {
+    tft.readRect(0, y, SCREEN_W, 1, row);
+    for (int x = 0; x < SCREEN_W; ++x) {  // readRect() returns byte-swapped RGB565
+      bytes[x * 2] = row[x] & 0xFF;
+      bytes[x * 2 + 1] = row[x] >> 8;
+    }
+    Serial.print(PROTOCOL_PREFIX);
+    Serial.print("{\"type\":\"shot_row\",\"y\":");
+    Serial.print(y);
+    Serial.print(",\"d\":\"");
+    Serial.print(base64::encode(bytes, sizeof(bytes)));
+    Serial.println("\"}");
+  }
+  fullRedrawRequested = true;
+}
+
 void updatePcLink() {
   if (pcLinkUp == netConnected()) return;
   pcLinkUp = netConnected();
@@ -1323,6 +1349,8 @@ void processSerialLine(const String &line) {
     handleNotify(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
+  } else if (strcmp(type, "shot") == 0) {
+    handleShot(doc);
 #endif
   } else if (strcmp(type, "ping") == 0) {
     sendSimpleFrame("pong");
@@ -1408,6 +1436,7 @@ void setup() {
   setupTouchCalibration();
 #ifdef DECK_UI_V2
   applyRotation();
+  uiFontBegin(tft);
   setupBacklight();  // after tft.init(), which drives TFT_BL as a plain output
   lastActivityMs = millis();
 #endif

@@ -1,26 +1,16 @@
-// Only the CYD UI v2 build has the Vietnamese font library.
+// Only the CYD UI v2 build has the Noto fonts (src/ui_font.h).
 #ifdef DECK_UI_V2
 #include "text_vi.h"
 
-#include <U8g2_for_TFT_eSPI.h>
+#include "ui_font.h"
 
 namespace {
-U8g2_for_TFT_eSPI viRenderer;
-bool viFontReady = false;
-
-U8g2_for_TFT_eSPI &renderer() {
-  if (!viFontReady) {
-    viRenderer.setFont(u8g2_font_unifont_t_vietnamese2);
-    viRenderer.setFontMode(0);  // draw the background so updates overwrite cleanly
-    viFontReady = true;
-  }
-  return viRenderer;
-}
-
 // ASCII printable plus the Latin blocks Vietnamese letters live in.
 bool isAllowed(uint32_t cp) {
   if (cp >= 0x20 && cp <= 0x7E) return true;
-  if (cp >= 0xC0 && cp <= 0x24F && cp != 0xD7 && cp != 0xF7) return true;
+  // Exactly the glyphs in the Noto arrays (tools/make_smooth_fonts.py), so none is ever missing.
+  if (cp >= 0xC0 && cp <= 0x17F && cp != 0xD7 && cp != 0xF7) return true;
+  if (cp == 0x1A0 || cp == 0x1A1 || cp == 0x1AF || cp == 0x1B0) return true;  // O/U with horn
   return cp >= 0x1EA0 && cp <= 0x1EF9;
 }
 
@@ -135,12 +125,12 @@ String sanitizeVi(const String &utf8, size_t maxChars) {
   return cut;
 }
 
-int16_t viTextWidth(const String &utf8) {
-  return renderer().getUTF8Width(utf8.c_str());
+int16_t viTextWidth(const String &utf8, bool bold) {
+  return uiTextWidthIn(bold ? UiFont::BodyBold : UiFont::Body, utf8);
 }
 
-String fitViText(const String &utf8, int maxWidth) {
-  if (viTextWidth(utf8) <= maxWidth) return utf8;
+String fitViText(const String &utf8, int maxWidth, bool bold) {
+  if (viTextWidth(utf8, bold) <= maxWidth) return utf8;
   // Drop whole code points from the end until text + "..." fits.
   String cut = utf8;
   while (cut.length() > 0) {
@@ -148,16 +138,14 @@ String fitViText(const String &utf8, int maxWidth) {
     while (end > 0 && (static_cast<uint8_t>(cut[end]) & 0xC0) == 0x80) --end;
     cut.remove(end);
     cut.trim();
-    if (viTextWidth(cut + "...") <= maxWidth) break;
+    if (viTextWidth(cut + "...", bold) <= maxWidth) break;
   }
   return cut + "...";
 }
 
-void drawViText(TFT_eSPI &tft, int x, int y, const String &utf8, uint16_t fg, uint16_t bg) {
-  U8g2_for_TFT_eSPI &r = renderer();
-  r.begin(tft);
-  r.setForegroundColor(fg);
-  r.setBackgroundColor(bg);
-  r.drawUTF8(x, y + r.getFontAscent(), utf8.c_str());
+void drawViText(TFT_eSPI &tft, int x, int y, const String &utf8, uint16_t fg, uint16_t bg, bool bold) {
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(fg, bg);
+  uiTextIn(bold ? UiFont::BodyBold : UiFont::Body, utf8, x, y);
 }
 #endif  // DECK_UI_V2

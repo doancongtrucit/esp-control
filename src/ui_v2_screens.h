@@ -62,7 +62,7 @@ void drawHeaderV2(const char *title, bool homeButton) {
   if (title) {
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(T_TEXT, T_BG);
-    tft.drawString(title, homeButton ? 44 : 10, UI_HEADER_H / 2, 2);
+    uiTextIn(UiFont::BodyBold, title, homeButton ? 44 : 10, UI_HEADER_H / 2);
   }
 }
 
@@ -76,7 +76,7 @@ void drawHeaderStatusV2() {
   tft.fillCircle(STATUS_X + 30, UI_HEADER_H / 2, 3, dot);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
-  tft.drawString(currentClockText(), UI_SCREEN_W - 10, UI_HEADER_H / 2, 2);
+  uiText(currentClockText(), UI_SCREEN_W - 10, UI_HEADER_H / 2, 2);
 }
 
 // ---------- Home ----------
@@ -106,19 +106,19 @@ void drawHomeStatusBar() {
   }
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
-  tft.drawString(date, 12, STATUS_BAR_H / 2, 2);
+  uiText(date, 12, STATUS_BAR_H / 2, 2);
 
   // Right to left: USB box, Bluetooth, Wi-Fi, clock.
   const uint16_t usb = usbLive() ? T_TEXT : T_MUTED;
   tft.drawRoundRect(284, 7, 28, 13, 4, usb);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(usb, T_BG);
-  tft.drawString("USB", 298, 14, 1);
+  uiText("USB", 298, 14, 1);
   drawIcon(tft, Icon::Bluetooth, 266, 6, 14, phoneLinkUp ? T_TEXT : T_MUTED, T_BG);
   drawIcon(tft, Icon::Wifi, 246, 6, 14, pcLinkUp ? T_TEXT : T_MUTED, T_BG);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
-  tft.drawString(currentClockText(), 240, STATUS_BAR_H / 2, 2);
+  uiText(currentClockText(), 240, STATUS_BAR_H / 2, 2);
 }
 
 void drawHomeApp(int index) {
@@ -133,7 +133,7 @@ void drawHomeApp(int index) {
   drawIcon(tft, app.icon, ix + 11, iy + 11, 26, 0xFFFF, blend565(top, bottom, 128));
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
-  tft.drawString(app.label, c.x + c.w / 2, iy + APP_ICON + 14, 2);
+  uiText(app.label, c.x + c.w / 2, iy + APP_ICON + 14, 2);
 
   if (index == NOTIFY_APP) {
     const size_t unread = notifyStore.unreadCount();
@@ -142,7 +142,7 @@ void drawHomeApp(int index) {
       tft.fillCircle(ix + APP_ICON - 2, iy + 2, 10, T_BG);
       tft.fillCircle(ix + APP_ICON - 2, iy + 2, 8, T_BADGE);
       tft.setTextColor(0xFFFF, T_BADGE);
-      tft.drawString(count, ix + APP_ICON - 2, iy + 3, 1);
+      uiText(count, ix + APP_ICON - 2, iy + 3, 1);
     }
     drawnNotifyVersion = notifyStore.version();
   }
@@ -154,15 +154,15 @@ void drawHomeFooter() {
   const char *labels[3] = {"PC online", "iPhone", "Wi-Fi"};
   const bool up[3] = {usbLive(), phoneLinkUp, pcLinkUp};
   int total = 0;
-  for (const char *label : labels) total += 10 + tft.textWidth(label, 2) + 12;
+  for (const char *label : labels) total += 10 + uiTextWidth(label, 2) + 12;
   int x = (UI_SCREEN_W - total + 12) / 2;
   const int midY = HOME_FOOTER_Y + 12;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_MUTED, T_BG);
   for (int i = 0; i < 3; ++i) {
     tft.fillCircle(x + 3, midY, 3, up[i] ? T_UP : T_DOWN);
-    tft.drawString(labels[i], x + 10, midY, 2);
-    x += 10 + tft.textWidth(labels[i], 2) + 12;
+    uiText(labels[i], x + 10, midY, 2);
+    x += 10 + uiTextWidth(labels[i], 2) + 12;
   }
 }
 
@@ -191,7 +191,7 @@ void touchHomeV2(uint16_t x, uint16_t y) {
 
 constexpr int MON_ROW_Y[4] = {42, 70, 98, 126};
 constexpr int MON_BAR_X = 56;
-constexpr int MON_BAR_W = 150;
+constexpr int MON_BAR_W = 126;
 constexpr int MON_BOX_Y = 156;
 constexpr int MON_BOX_H = 74;
 
@@ -202,13 +202,13 @@ void drawMonitorV2Static() {
   const char *names[4] = {"CPU", "RAM", "GPU", "VRAM"};
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_INK, T_SURFACE);
-  for (int i = 0; i < 4; ++i) tft.drawString(names[i], 10, MON_ROW_Y[i] + 8, 2);
+  for (int i = 0; i < 4; ++i) uiText(names[i], 10, MON_ROW_Y[i] + 8, 2);
   const char *boxes[2] = {"NETWORK", "DISK C:"};
   for (int i = 0; i < 2; ++i) {
     const int x = 10 + i * 153;
     tft.fillRoundRect(x, MON_BOX_Y, 147, MON_BOX_H, 8, T_TILE);
     tft.setTextColor(T_MUTED, T_TILE);
-    tft.drawString(boxes[i], x + 8, MON_BOX_Y + 12, 1);
+    uiText(boxes[i], x + 8, MON_BOX_Y + 12, 1);
   }
 }
 
@@ -220,9 +220,9 @@ void drawMonitorRow(int row, float pct, const String &aux) {
   tft.fillRect(MON_BAR_X + MON_BAR_W + 4, y - 2, UI_SCREEN_W - MON_BAR_X - MON_BAR_W - 4, 20, T_SURFACE);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_INK, T_SURFACE);
-  tft.drawString(fmtValue(pct) + "%", 248, y + 8, 2);
+  uiText(fmtValue(pct) + "%", 226, y + 8, 2);
   tft.setTextColor(T_MUTED, T_SURFACE);
-  tft.drawString(aux, UI_SCREEN_W - 8, y + 8, 2);
+  uiText(aux, UI_SCREEN_W - 8, y + 8, 2);
 }
 
 void drawMonitorBox(int index, const String &value, const String &detail) {
@@ -230,9 +230,9 @@ void drawMonitorBox(int index, const String &value, const String &detail) {
   tft.fillRect(x + 6, MON_BOX_Y + 22, 135, 46, T_TILE);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_INK, T_TILE);
-  tft.drawString(value, x + 8, MON_BOX_Y + 32, 2);
+  uiText(value, x + 8, MON_BOX_Y + 32, 2);
   tft.setTextColor(T_MUTED, T_TILE);
-  tft.drawString(detail, x + 8, MON_BOX_Y + 54, 2);
+  uiText(detail, x + 8, MON_BOX_Y + 54, 2);
 }
 
 void drawMonitorV2Dynamic() {
@@ -287,16 +287,16 @@ void drawControlButton(int slot, bool flash = false) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
   if (line2.length() > 0) {
-    tft.drawString(line1, c.x + c.w / 2, iy + CONTROL_ICON + 11, 2);
-    tft.drawString(line2, c.x + c.w / 2, iy + CONTROL_ICON + 26, 2);
+    uiText(line1, c.x + c.w / 2, iy + CONTROL_ICON + 11, 2);
+    uiText(line2, c.x + c.w / 2, iy + CONTROL_ICON + 26, 2);
   } else {
-    tft.drawString(line1, c.x + c.w / 2, iy + CONTROL_ICON + 14, 2);
+    uiText(line1, c.x + c.w / 2, iy + CONTROL_ICON + 14, 2);
   }
   if (macroHold[id - 1]) {
-    tft.fillRoundRect(ix + CONTROL_ICON - 22, iy - 6, 34, 14, 7, T_BG);
-    tft.fillRoundRect(ix + CONTROL_ICON - 20, iy - 4, 30, 10, 5, T_ACCENT);
+    tft.fillRoundRect(ix + CONTROL_ICON - 24, iy - 7, 38, 16, 8, T_BG);
+    tft.fillRoundRect(ix + CONTROL_ICON - 22, iy - 5, 34, 12, 6, T_ACCENT);
     tft.setTextColor(T_ON_ACCENT, T_ACCENT);
-    tft.drawString("HOLD", ix + CONTROL_ICON - 5, iy + 1, 1);
+    uiTextIn(UiFont::Tiny, "HOLD", ix + CONTROL_ICON - 5, iy + 1);
   }
 }
 
@@ -306,7 +306,7 @@ void drawControlsV2() {
   drawIcon(tft, Icon::ChevronRight, NEXT_BTN_X + 10, 8, 16, T_TEXT, T_BG);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
-  tft.drawString(CONTROLS_TITLES[controlsPage], (PREV_BTN_X + ARROW_BTN_W + NEXT_BTN_X) / 2, UI_HEADER_H / 2, 2);
+  uiText(CONTROLS_TITLES[controlsPage], (PREV_BTN_X + ARROW_BTN_W + NEXT_BTN_X) / 2, UI_HEADER_H / 2, 2);
   for (int page = 0; page < MACRO_PAGES; ++page) {
     tft.fillCircle(NEXT_BTN_X + ARROW_BTN_W + 8 + page * 10, UI_HEADER_H / 2, 3,
                    page == controlsPage ? T_TEXT : T_DIVIDER);
@@ -404,7 +404,7 @@ void drawTabStrip(const InfoTabSpec *specs, int count, int activeTab) {
     drawIcon(tft, specs[i].icon, c.x + (c.w - 12) / 2, c.y + 2, 12, fg, bg);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(fg, bg);
-    tft.drawString(specs[i].label, c.x + c.w / 2, c.y + 21, 1);
+    uiText(specs[i].label, c.x + c.w / 2, c.y + 21, 1);
   }
 }
 
@@ -413,7 +413,7 @@ void drawInfoTabs() { drawTabStrip(INFO_TAB_SPECS, INFO_TABS, infoTab); }
 void drawInfoEmpty(const char *message) {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(message, UI_SCREEN_W / 2, (INFO_Y + UI_SCREEN_H) / 2, 2);
+  uiText(message, UI_SCREEN_W / 2, (INFO_Y + UI_SCREEN_H) / 2, 2);
 }
 
 // ---------- Info: Gold ----------
@@ -428,11 +428,11 @@ void drawGoldTab() {
 
   tft.setTextColor(T_MUTED, T_CARD);
   tft.setTextDatum(ML_DATUM);
-  tft.drawString("x1000 VND / chi", 10, headY + 9, 1);
+  uiText("x1000 VND / chi", 10, headY + 9, 1);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString("BUY", colBuy, headY + 9, 1);
-  tft.drawString("SELL", colSell, headY + 9, 1);
-  tft.drawString("+/-", colChange, headY + 9, 1);
+  uiText("BUY", colBuy, headY + 9, 1);
+  uiText("SELL", colSell, headY + 9, 1);
+  uiText("+/-", colChange, headY + 9, 1);
 
   if (!info.hasGold) {
     drawInfoEmpty("No data yet");
@@ -446,14 +446,14 @@ void drawGoldTab() {
     tft.fillRect(0, y, UI_SCREEN_W, rowH, bg);
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(T_TEXT, bg);
-    tft.drawString(info.goldName[i], 10, mid, 2);
+    uiText(info.goldName[i], 10, mid, 2);
     tft.setTextDatum(MR_DATUM);
-    tft.drawString(fmtPrice(info.goldBuy[i]), colBuy, mid, 2);
+    uiText(fmtPrice(info.goldBuy[i]), colBuy, mid, 2);
     tft.setTextColor(T_GOLD, bg);
-    tft.drawString(fmtPrice(info.goldSell[i]), colSell, mid, 2);
+    uiText(fmtPrice(info.goldSell[i]), colSell, mid, 2);
     const long change = info.goldChange[i];
     tft.setTextColor(change > 0 ? T_UP : (change < 0 ? T_DOWN : T_MUTED), bg);
-    tft.drawString(change > 0 ? "+" + fmtPrice(change) : fmtPrice(change), colChange, mid, 2);
+    uiText(change > 0 ? "+" + fmtPrice(change) : fmtPrice(change), colChange, mid, 2);
   }
 
   constexpr int footY = 226;
@@ -461,13 +461,13 @@ void drawGoldTab() {
   if (!isnan(info.xau)) {
     const String world = "World $" + String(info.xau, 1) + "/oz ";
     tft.setTextColor(T_MUTED, T_CARD);
-    tft.drawString(world, 10, footY, 2);
+    uiText(world, 10, footY, 2);
     tft.setTextColor(info.xauChange > 0 ? T_UP : (info.xauChange < 0 ? T_DOWN : T_MUTED), T_CARD);
-    tft.drawString((info.xauChange > 0 ? "+" : "") + String(info.xauChange, 1), 10 + tft.textWidth(world, 2), footY, 2);
+    uiText((info.xauChange > 0 ? "+" : "") + String(info.xauChange, 1), 10 + uiTextWidth(world, 2), footY, 2);
   }
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString("Updated " + info.goldTime, colChange, footY, 2);
+  uiText("Updated " + info.goldTime, colChange, footY, 2);
 }
 
 // ---------- Info: Calendar ----------
@@ -497,35 +497,35 @@ void drawCalendarTab() {
   const int cx = cardX + cardW / 2;
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(rgb565(0xff375f), T_CARD_ALT);
-  tft.drawString(WEEKDAY_LONG[dayOfWeek(day, month, year)], cx, cardY + 14, 1);
+  uiText(WEEKDAY_LONG[dayOfWeek(day, month, year)], cx, cardY + 14, 1);
   tft.setTextColor(T_TEXT, T_CARD_ALT);
   char text[24];
   snprintf(text, sizeof(text), "%02d", day);
-  tft.drawString(text, cx, cardY + 40, 4);
+  uiText(text, cx, cardY + 40, 4);
   tft.setTextColor(T_MUTED, T_CARD_ALT);
   snprintf(text, sizeof(text), "%s %d", MONTH_SHORT[month - 1], year);
-  tft.drawString(text, cx, cardY + 64, 2);
+  uiText(text, cx, cardY + 64, 2);
   tft.drawFastHLine(cardX + 16, cardY + 78, cardW - 32, T_DIVIDER);
-  tft.drawString(today.leap ? "LUNAR (LEAP)" : "LUNAR", cx, cardY + 90, 1);
+  uiText(today.leap ? "LUNAR (LEAP)" : "LUNAR", cx, cardY + 90, 1);
   tft.setTextColor(T_ACCENT, T_CARD_ALT);
   snprintf(text, sizeof(text), "%d/%d", today.day, today.month);
-  tft.drawString(text, cx, cardY + 110, 4);
+  uiText(text, cx, cardY + 110, 4);
   tft.setTextColor(T_MUTED, T_CARD_ALT);
-  tft.drawString(canChiYear(today.year), cx, cardY + 134, 2);
+  uiText(canChiYear(today.year), cx, cardY + 134, 2);
 
   // Right: Monday-first month grid with the lunar day under each solar day.
-  constexpr int gridX = 108, gridW = 204, headY = INFO_Y + 6, weekY = INFO_Y + 20, rowsY = INFO_Y + 31;
+  constexpr int gridX = 108, gridW = 204, headY = INFO_Y + 7, weekY = INFO_Y + 20, rowsY = INFO_Y + 30;
   constexpr int rowH = (UI_SCREEN_H - 2 - rowsY) / 6;
   const int colW = gridW / 7;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
   snprintf(text, sizeof(text), "%s %d", MONTH_LONG[month - 1], year);
-  tft.drawString(text, gridX + 2, headY, 1);
+  uiTextIn(UiFont::Tiny, text, gridX + 2, headY);
   const char *const WEEK_INITIALS = "MTWTFSS";
   tft.setTextDatum(MC_DATUM);
   for (int c = 0; c < 7; ++c) {
     tft.setTextColor(c == 6 ? T_DOWN : T_MUTED, T_CARD);
-    tft.drawString(String(WEEK_INITIALS[c]), gridX + c * colW + colW / 2, weekY, 1);
+    uiTextIn(UiFont::Tiny, String(WEEK_INITIALS[c]), gridX + c * colW + colW / 2, weekY);
   }
   const int lead = dayOfWeek(1, month, year);
   const int count = daysInMonth(month, year);
@@ -538,11 +538,11 @@ void drawCalendarTab() {
     const uint16_t bg = isToday ? T_LINK : T_CARD;
     if (isToday) tft.fillRoundRect(x + 1, y, colW - 2, rowH - 1, 5, T_LINK);
     tft.setTextColor(isToday ? 0xFFFF : (cell % 7 == 6 ? T_DOWN : T_TEXT), bg);
-    tft.drawString(String(d), x + colW / 2, y + 7, 2);
+    uiText(String(d), x + colW / 2, y + 7, 2);
     const bool special = l.day == 1 || l.day == 15;
     snprintf(text, sizeof(text), l.day == 1 ? "%d/%d" : "%d", l.day, l.month);
     tft.setTextColor(isToday ? 0xFFFF : (special ? T_ACCENT : T_MUTED), bg);
-    tft.drawString(text, x + colW / 2, y + rowH - 5, 1);
+    uiTextIn(UiFont::Tiny, text, x + colW / 2, y + rowH - 6);
   }
 }
 
@@ -562,9 +562,9 @@ void drawInfoFooter(const String &left, const char *date, const char *time) {
   constexpr int footY = UI_INFO_FOOTER_Y;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(left, 10, footY, 1);
+  uiText(left, 10, footY, 1);
   tft.setTextDatum(MR_DATUM);
-  tft.drawString("Updated " + updated, UI_SCREEN_W - 10, footY, 1);
+  uiText("Updated " + updated, UI_SCREEN_W - 10, footY, 1);
 }
 
 uint16_t changeColorFor(float change) { return change > 0 ? T_UP : (change < 0 ? T_DOWN : T_MUTED); }
@@ -589,17 +589,17 @@ void drawCoinTab() {
     tft.fillCircle(22, mid, 11, coinColor(row.symbol));
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(T_ON_ACCENT, coinColor(row.symbol));
-    tft.drawString(String(row.symbol[0]), 22, mid + 1, 2);
+    uiText(String(row.symbol[0]), 22, mid + 1, 2);
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(T_TEXT, T_CARD);
-    tft.drawString(row.symbol, 40, mid, 2);
+    uiText(row.symbol, 40, mid, 2);
     tft.setTextColor(T_MUTED, T_CARD);
-    tft.drawString(row.name, 40 + tft.textWidth(row.symbol, 2) + 6, mid + 1, 1);
+    uiText(row.name, 40 + uiTextWidth(row.symbol, 2) + 6, mid + 1, 1);
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(T_TEXT, T_CARD);
-    tft.drawString(coinPriceText(row.price), 248, mid, 2);
+    uiText(coinPriceText(row.price), 248, mid, 2);
     tft.setTextColor(changeColorFor(row.change), T_CARD);
-    tft.drawString(signedPercent(row.change), UI_SCREEN_W - 10, mid, 2);
+    uiText(signedPercent(row.change), UI_SCREEN_W - 10, mid, 2);
   }
   drawInfoFooter("USD - 24h change", coins.date, coins.time);
 }
@@ -629,14 +629,14 @@ void drawQuoteRow(int y, const char *name, const char *kind, const String &value
   tft.drawFastHLine(10, y, UI_SCREEN_W - 20, T_DIVIDER);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_TEXT, T_CARD);
-  tft.drawString(name, 10, mid, 2);
+  uiText(name, 10, mid, 2);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(kind, 104, mid + 1, 1);
+  uiText(kind, 104, mid + 1, 1);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_TEXT, T_CARD);
-  tft.drawString(value, 248, mid, 2);
+  uiText(value, 248, mid, 2);
   tft.setTextColor(changeColorFor(change), T_CARD);
-  tft.drawString(signedPercent(change), UI_SCREEN_W - 10, mid, 2);
+  uiText(signedPercent(change), UI_SCREEN_W - 10, mid, 2);
 }
 
 void drawStockTab() {
@@ -647,11 +647,11 @@ void drawStockTab() {
   const QuoteRow &main = stocks.index[0];
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(main.name, 10, INFO_Y + 6, 1);
+  uiText(main.name, 10, INFO_Y + 6, 1);
   tft.setTextColor(T_TEXT, T_CARD);
-  tft.drawString(fmtGrouped(main.value, 2), 10, INFO_Y + 17, 4);
+  uiText(fmtGrouped(main.value, 2), 10, INFO_Y + 17, 4);
   tft.setTextColor(changeColorFor(main.change), T_CARD);
-  tft.drawString(signedPercent(main.change), 10, INFO_Y + 44, 2);
+  uiText(signedPercent(main.change), 10, INFO_Y + 44, 2);
   drawSparkline(176, INFO_Y + 10, 134, 40);
 
   int y = INFO_Y + 64;
@@ -688,13 +688,13 @@ void drawWeatherTab() {
   const String temp = isnan(weather.temp) ? String("--") : String(static_cast<int>(lroundf(weather.temp)));
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(T_TEXT, T_CARD);
-  tft.drawString(temp, 62, INFO_Y + 12, 4);
-  const int tempW = tft.textWidth(temp, 4);
+  uiText(temp, 62, INFO_Y + 12, 4);
+  const int tempW = uiTextWidth(temp, 4);
   tft.drawCircle(66 + tempW, INFO_Y + 15, 3, T_TEXT);  // degree sign
-  tft.drawString(weather.desc, 128, INFO_Y + 8, 2);
+  uiText(weather.desc, 128, INFO_Y + 8, 2);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(String(weather.city) + " - feels " + String(weather.feels) + "C", 128, INFO_Y + 26, 1);
-  tft.drawString("Humidity " + String(weather.humidity) + "%  Wind " + String(weather.wind) + " km/h", 128, INFO_Y + 40, 1);
+  uiText(String(weather.city) + " - feels " + String(weather.feels) + "C", 128, INFO_Y + 26, 1);
+  uiText("Humidity " + String(weather.humidity) + "%  Wind " + String(weather.wind) + " km/h", 128, INFO_Y + 40, 1);
 
   const CellRect box = weatherDaysBox();
   for (int i = 0; i < weather.dayCount; ++i) {
@@ -704,13 +704,13 @@ void drawWeatherTab() {
     const int cx = c.x + c.w / 2;
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(T_MUTED, T_CARD_ALT);
-    tft.drawString(day.day, cx, c.y + 12, 2);
+    uiText(day.day, cx, c.y + 12, 2);
     drawWeatherIcon(day.icon, cx - 14, c.y + 24, 28, T_CARD_ALT);
     tft.setTextColor(T_TEXT, T_CARD_ALT);
-    tft.drawString(String(day.hi) + "/" + String(day.lo), cx, c.y + 66, 2);
+    uiText(String(day.hi) + "/" + String(day.lo), cx, c.y + 66, 2);
     if (day.rain >= 0) {
       tft.setTextColor(rgb565(0x64d2ff), T_CARD_ALT);
-      tft.drawString(String(day.rain) + "%", cx, c.y + 86, 2);
+      uiText(String(day.rain) + "%", cx, c.y + 86, 2);
     }
   }
   drawInfoFooter("Open-Meteo", weather.date, weather.time);
@@ -765,7 +765,7 @@ void drawLinkChip(int x, const char *label, Icon icon, bool up) {
   drawIcon(tft, icon, x + 8, NOTIFY_CHIP_Y + 4, 14, T_INK, T_TILE);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_INK, T_TILE);
-  tft.drawString(label, x + 28, NOTIFY_CHIP_Y + 11, 2);
+  uiText(label, x + 28, NOTIFY_CHIP_Y + 11, 2);
   tft.fillCircle(x + 137, NOTIFY_CHIP_Y + 11, 4, up ? T_UP : T_DOWN);
 }
 
@@ -776,12 +776,12 @@ void drawNotifyRow(int index) {
   tft.fillRoundRect(8, y, UI_SCREEN_W - 16, NOTIFY_ROW_H - 2, 8, bg);
   tft.drawRoundRect(14, y + 9, 22, 22, 5, T_BORDER);
   drawIcon(tft, n.source == NotifySource::Phone ? Icon::Phone : Icon::Monitor, 18, y + 13, 14, T_INK, bg);
-  drawViText(tft, NOTIFY_TEXT_X, y + 3, fitViText(notifyTitle(n), NOTIFY_TEXT_W), T_INK, bg);
+  drawViText(tft, NOTIFY_TEXT_X, y + 3, fitViText(notifyTitle(n), NOTIFY_TEXT_W, true), T_INK, bg, true);
   const String body = settings.hideBody ? String("Content hidden") : n.body;
   drawViText(tft, NOTIFY_TEXT_X, y + 21, fitViText(body, NOTIFY_TEXT_W), T_MUTED, bg);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_MUTED, bg);
-  tft.drawString(agoText(n.receivedMs), UI_SCREEN_W - 14, y + 20, 1);
+  uiText(agoText(n.receivedMs), UI_SCREEN_W - 14, y + 20, 1);
 }
 
 void drawNotifyHideToggle() {
@@ -790,7 +790,7 @@ void drawNotifyHideToggle() {
   tft.fillRoundRect(STATUS_X + 2, 4, UI_SCREEN_W - STATUS_X - 8, 24, 6, bg);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(settings.hideBody ? T_ON_ACCENT : T_TEXT, bg);
-  tft.drawString(settings.hideBody ? "HIDE: ON" : "HIDE: OFF", (STATUS_X + UI_SCREEN_W - 6) / 2, 16, 2);
+  uiText(settings.hideBody ? "HIDE: ON" : "HIDE: OFF", (STATUS_X + UI_SCREEN_W - 6) / 2, 16, 2);
 }
 
 void drawNotifyV2() {
@@ -801,7 +801,7 @@ void drawNotifyV2() {
   if (notifyStore.size() == 0) {
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(T_MUTED, T_SURFACE);
-    tft.drawString("No notifications yet", UI_SCREEN_W / 2, 150, 2);
+    uiText("No notifications yet", UI_SCREEN_W / 2, 150, 2);
   }
   for (size_t i = 0; i < notifyStore.size() && i < NOTIFY_ROWS; ++i) drawNotifyRow(i);
   // Seen now: rows keep their unread look until the next redraw.
@@ -824,7 +824,7 @@ void drawBannerV2() {
   tft.drawRect(0, 0, UI_SCREEN_W, BANNER_H, T_ACCENT);
   tft.drawRect(1, 1, UI_SCREEN_W - 2, BANNER_H - 2, T_ACCENT);
   drawIcon(tft, n.source == NotifySource::Phone ? Icon::Phone : Icon::Monitor, 8, 12, 16, T_INK, T_ALERT_BG);
-  drawViText(tft, 30, 3, fitViText(notifyTitle(n), 280), T_INK, T_ALERT_BG);
+  drawViText(tft, 30, 3, fitViText(notifyTitle(n), 280, true), T_INK, T_ALERT_BG, true);
   const String body = settings.hideBody ? String("Content hidden") : n.body;
   drawViText(tft, 30, 20, fitViText(body, 280), T_MUTED, T_ALERT_BG);
 }
@@ -850,7 +850,7 @@ void drawPlaceholderV2(const char *title) {
   drawHeaderV2(title, true);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_MUTED, T_SURFACE);
-  tft.drawString("Coming in phase 2", UI_SCREEN_W / 2, 136, 2);
+  uiText("Coming in phase 2", UI_SCREEN_W / 2, 136, 2);
 }
 
 // ---------- Settings ----------
@@ -884,7 +884,7 @@ void drawSetRow(int row, const char *label, int x = SET_ROW_X, int w = SET_ROW_W
   if (!label) return;
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_TEXT, T_CARD_ALT);
-  tft.drawString(label, x + 10, y + SET_ROW_H / 2, 2);
+  uiText(label, x + 10, y + SET_ROW_H / 2, 2);
 }
 
 // Pill switch whose right edge is `right`.
@@ -912,7 +912,7 @@ void drawSegments(int row, const char *const *labels, int n, int active, bool fi
     if (!labels) continue;
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(on ? T_TEXT : T_MUTED, bg);
-    tft.drawString(labels[i], c.x + c.w / 2, c.y + c.h / 2 + 1, 1);
+    uiText(labels[i], c.x + c.w / 2, c.y + c.h / 2 + 1, 1);
   }
 }
 
@@ -928,14 +928,14 @@ void drawValueRow(int row, const char *label, const String &value, uint16_t colo
   drawSetRow(row, label);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(color, T_CARD_ALT);
-  tft.drawString(value, SET_ROW_X + SET_ROW_W - 10, setRowY(row) + SET_ROW_H / 2, 2);
+  uiText(value, SET_ROW_X + SET_ROW_W - 10, setRowY(row) + SET_ROW_H / 2, 2);
 }
 
 void drawActionRow(int row, const char *label, uint16_t color, int x = SET_ROW_X, int w = SET_ROW_W) {
   drawSetRow(row, nullptr, x, w);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(color, T_CARD_ALT);
-  tft.drawString(label, x + w / 2, setRowY(row) + SET_ROW_H / 2, 2);
+  uiText(label, x + w / 2, setRowY(row) + SET_ROW_H / 2, 2);
 }
 
 String hourText(uint8_t hour) {
@@ -949,7 +949,7 @@ void drawQuietBox(int x, uint8_t hour, bool on) {
   tft.fillRoundRect(x, y, QUIET_BOX_W, SET_ROW_H - 8, 5, T_LINE);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(on ? T_TEXT : T_MUTED, T_LINE);
-  tft.drawString(hourText(hour), x + QUIET_BOX_W / 2, y + (SET_ROW_H - 8) / 2 + 1, 2);
+  uiText(hourText(hour), x + QUIET_BOX_W / 2, y + (SET_ROW_H - 8) / 2 + 1, 2);
 }
 
 void drawAppChip(int i) {
@@ -961,7 +961,7 @@ void drawAppChip(int i) {
   tft.fillCircle(c.x + 9, c.y + c.h / 2, 3, muted ? T_DOWN : T_UP);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(muted ? T_MUTED : T_TEXT, bg);
-  tft.drawString(NOTIFY_APPS[i], c.x + 17, c.y + c.h / 2, 1);
+  uiText(NOTIFY_APPS[i], c.x + 17, c.y + c.h / 2, 1);
 }
 
 String uptimeText() {
@@ -1002,8 +1002,8 @@ void drawSettingsV2() {
       drawSegments(3, SLEEP_LABELS, SLEEP_OPTIONS, settings.standbyIndex, false);
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(T_MUTED, T_CARD);
-      tft.drawString("Standby: clock screen after no touch. Tap to go back.", SET_ROW_X + 2, setRowY(4) + 8, 1);
-      tft.drawString("Screen off: backlight off; tap to wake.", SET_ROW_X + 2, setRowY(4) + 20, 1);
+      uiText("Standby: clock screen after no touch. Tap to go back.", SET_ROW_X + 2, setRowY(4) + 6, 1);
+      uiText("Screen off: backlight off; tap to wake.", SET_ROW_X + 2, setRowY(4) + 23, 1);
       break;
     case SET_NOTIFY:
       drawSwitchRow(0, "iPhone", settings.phoneOn, SET_ROW_X, SET_HALF_W);
@@ -1013,7 +1013,7 @@ void drawSettingsV2() {
       drawQuietBox(QUIET_START_X, settings.quietStart, settings.quietOn);
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(T_MUTED, T_CARD_ALT);
-      tft.drawString("-", (QUIET_START_X + QUIET_BOX_W + QUIET_END_X) / 2, setRowY(2) + SET_ROW_H / 2, 2);
+      uiText("-", (QUIET_START_X + QUIET_BOX_W + QUIET_END_X) / 2, setRowY(2) + SET_ROW_H / 2, 2);
       drawQuietBox(QUIET_END_X, settings.quietEnd, settings.quietOn);
       for (int i = 0; i < NOTIFY_APP_COUNT; ++i) drawAppChip(i);
       break;
@@ -1053,9 +1053,9 @@ bool holdRect(int x, int row, int w) {
   tft.fillRect(0, INFO_Y, UI_SCREEN_W, UI_SCREEN_H - INFO_Y, T_CARD);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(T_TEXT, T_CARD);
-  tft.drawString(line1, UI_SCREEN_W / 2, 130, 2);
+  uiText(line1, UI_SCREEN_W / 2, 130, 2);
   tft.setTextColor(T_MUTED, T_CARD);
-  tft.drawString(line2, UI_SCREEN_W / 2, 154, 1);
+  uiText(line2, UI_SCREEN_W / 2, 154, 1);
   delay(2500);
   ESP.restart();
   while (true) delay(10);
@@ -1177,12 +1177,24 @@ void drawStandbyBackground(int x, int y, int w, int h) {
 #endif
 }
 
+// Background colour under (x, y), so antialiased text blends into the picture.
+uint16_t standbyPixel(uint16_t x, uint16_t y) {
+#ifdef DECK_STANDBY_IMAGE
+  if (x < STANDBY_IMAGE_W && y < STANDBY_IMAGE_H) return pgm_read_word(&STANDBY_IMAGE[y * STANDBY_IMAGE_W + x]);
+  return T_BG;
+#else
+  return blend565(rgb565(0x8b0a0a), T_BG, y * 255 / UI_SCREEN_H);
+#endif
+}
+
 // Text with a 1 px drop shadow, drawn straight onto the picture.
 void drawShadowText(const String &text, int x, int y, uint8_t font, uint16_t color) {
-  tft.setTextColor(TFT_BLACK);
-  tft.drawString(text, x + 1, y + 2, font);
-  tft.setTextColor(color);
-  tft.drawString(text, x, y, font);
+  tft.setCallback(standbyPixel);
+  tft.setTextColor(TFT_BLACK, TFT_BLACK);
+  uiText(text, x + 1, y + 2, font);
+  tft.setTextColor(color, color);
+  uiText(text, x, y, font);
+  tft.setCallback(nullptr);
 }
 
 String standbyKey() {
@@ -1211,7 +1223,7 @@ void drawStandbyText() {
     const int tempX = STANDBY_TEXT_R - 8;  // room for the degree sign
     drawShadowText(temp, tempX, 188, 4, T_TEXT);
     tft.drawCircle(STANDBY_TEXT_R - 3, 192, 3, T_TEXT);
-    const int iconX = tempX - tft.textWidth(temp, 4) - 30;
+    const int iconX = tempX - uiTextWidth(temp, 4) - 30;
     drawWeatherIcon(weather.icon, iconX, 190, 24, rgb565(0x200404));
     drawShadowText(weather.city, STANDBY_TEXT_R, 220, 2, STANDBY_SOFT);
   }
@@ -1309,6 +1321,24 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Settings: touchSettingsV2(x, y); break;
     default: break;
   }
+}
+
+// Screenshot helper: opens a screen by name (and tab / page when given).
+void uiOpenForShot(const char *name, int tab) {
+  static const struct {
+    const char *name;
+    Screen target;
+  } SCREENS[] = {{"home", Screen::Home},       {"monitor", Screen::Monitor}, {"controls", Screen::Controls},
+                 {"info", Screen::Info},       {"claude", Screen::Claude},   {"aitools", Screen::AiTools},
+                 {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings}};
+  for (const auto &entry : SCREENS) {
+    if (strcmp(entry.name, name) == 0) screen = entry.target;
+  }
+  if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
+  if (tab >= 0 && screen == Screen::Settings) settingsTab = tab % SET_TABS;
+  if (tab >= 0 && screen == Screen::Controls) controlsPage = tab % MACRO_PAGES;
+  bannerActive = false;
+  lastActivityMs = millis();
 }
 
 // Horizontal swipe: next (+1) or previous (-1) tab / page inside the current app.
