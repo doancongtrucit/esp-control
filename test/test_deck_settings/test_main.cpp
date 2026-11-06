@@ -106,6 +106,31 @@ void test_unpack_clamps_out_of_range_values() {
   TEST_ASSERT_EQUAL(0, back.sleepIndex);
 }
 
+void test_standby_timer_round_trips() {
+  DeckSettings s;
+  TEST_ASSERT_EQUAL(2, s.standbyIndex);  // 5 minutes by default
+  s.standbyIndex = 1;
+  uint8_t blob[SETTINGS_BLOB_SIZE];
+  packSettings(s, blob);
+  DeckSettings back;
+  TEST_ASSERT_TRUE(unpackSettings(blob, sizeof(blob), back));
+  TEST_ASSERT_EQUAL(1, back.standbyIndex);
+  TEST_ASSERT_EQUAL_UINT32(60000UL, sleepTimeoutMs(back.standbyIndex));
+}
+
+void test_settings_saved_before_standby_get_the_default() {
+  DeckSettings s;
+  s.brightness = 1;
+  uint8_t blob[SETTINGS_BLOB_SIZE];
+  packSettings(s, blob);
+  blob[0] = 1;  // version 1 had no standby byte
+  blob[8] = 0;
+  DeckSettings back;
+  TEST_ASSERT_TRUE(unpackSettings(blob, sizeof(blob), back));
+  TEST_ASSERT_EQUAL(1, back.brightness);
+  TEST_ASSERT_EQUAL(2, back.standbyIndex);
+}
+
 void setup() {
   delay(2000);
   UNITY_BEGIN();
@@ -117,6 +142,8 @@ void setup() {
   RUN_TEST(test_notification_filter);
   RUN_TEST(test_round_trip_and_rejects_bad_blobs);
   RUN_TEST(test_unpack_clamps_out_of_range_values);
+  RUN_TEST(test_standby_timer_round_trips);
+  RUN_TEST(test_settings_saved_before_standby_get_the_default);
   UNITY_END();
 }
 

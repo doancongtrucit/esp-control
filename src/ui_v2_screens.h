@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, AiGpu, Notify, Settings };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -27,7 +27,7 @@ constexpr HomeApp HOME_APPS[8] = {
     {"Info", Icon::Pie, Screen::Info, 0xffd60a, 0xf5a300},
     {"Claude", Icon::Sparkle, Screen::Claude, 0xff9f0a, 0xff6b1a},
     {"AI Tools", Icon::Clipboard, Screen::AiTools, 0xbf5af2, 0x8e44ec},
-    {"AI GPU", Icon::Chip, Screen::AiGpu, 0x64d2ff, 0x2b8fd8},
+    {"Standby", Icon::Clock, Screen::Standby, 0x64d2ff, 0x2b8fd8},
     {"Notify", Icon::Bell, Screen::Notify, 0xff375f, 0xe0244a},
     {"Settings", Icon::Gear, Screen::Settings, 0x8e8e93, 0x5c5c63},
 };
@@ -69,7 +69,7 @@ void drawHeaderV2(const char *title, bool homeButton) {
 // USB link dot and PC clock, refreshed every second.
 void drawHeaderStatusV2() {
   // The banner covers the header; the Notifications header uses this area for HIDE.
-  if (bannerActive || screen == Screen::Notify || screen == Screen::Home) return;
+  if (bannerActive || screen == Screen::Notify || screen == Screen::Home || screen == Screen::Standby) return;
   const bool stale = stats.everUpdated && millis() - stats.lastUpdateMs > STALE_AFTER_MS;
   const uint16_t dot = !stats.everUpdated ? T_DIVIDER : (stale ? T_DOWN : T_UP);
   tft.fillRect(STATUS_X, 0, UI_SCREEN_W - STATUS_X, UI_HEADER_H - 1, T_BG);
@@ -998,9 +998,12 @@ void drawSettingsV2() {
       drawSetRow(1, "Screen off");
       drawSegments(1, SLEEP_LABELS, SLEEP_OPTIONS, settings.sleepIndex, false);
       drawSwitchRow(2, "Flip 180", settings.rotate180);
+      drawSetRow(3, "Standby");
+      drawSegments(3, SLEEP_LABELS, SLEEP_OPTIONS, settings.standbyIndex, false);
       tft.setTextDatum(ML_DATUM);
       tft.setTextColor(T_MUTED, T_CARD);
-      tft.drawString("Tap the screen to wake it after it turns off.", SET_ROW_X + 2, setRowY(3) + 10, 1);
+      tft.drawString("Standby: clock screen after no touch. Tap to go back.", SET_ROW_X + 2, setRowY(4) + 8, 1);
+      tft.drawString("Screen off: backlight off; tap to wake.", SET_ROW_X + 2, setRowY(4) + 20, 1);
       break;
     case SET_NOTIFY:
       drawSwitchRow(0, "iPhone", settings.phoneOn, SET_ROW_X, SET_HALF_W);
@@ -1083,6 +1086,9 @@ void touchSettingsV2(uint16_t x, uint16_t y) {
       } else if (row == 2) {
         settings.rotate180 = !settings.rotate180;
         applyRotation();
+      } else if (row == 3 && segmentAt(x, SLEEP_OPTIONS) >= 0) {
+        settings.standbyIndex = segmentAt(x, SLEEP_OPTIONS);
+        lastActivityMs = millis();
       } else {
         changed = false;
       }
@@ -1143,6 +1149,88 @@ void touchSettingsV2(uint16_t x, uint16_t y) {
   fullRedrawRequested = true;
 }
 
+// ---------- Standby ----------
+// Layout C: picture on the left, stacked clock / date / weather in a darkened right column.
+// The picture comes from tools/make_standby_image.py (git-ignored); without it, a gradient.
+#if __has_include("standby_image.h")
+#include "standby_image.h"
+#define DECK_STANDBY_IMAGE 1
+#endif
+
+constexpr int STANDBY_COL_X = 200;   // right column, repainted when the text changes
+constexpr int STANDBY_TEXT_R = 310;  // right edge of the text
+const uint16_t STANDBY_SOFT = rgb565(0xffd2d2);
+String drawnStandbyKey;
+
+// Repaints the background of a region (the picture rows, or the fallback gradient).
+void drawStandbyBackground(int x, int y, int w, int h) {
+#ifdef DECK_STANDBY_IMAGE
+  tft.setSwapBytes(true);
+  for (int row = y; row < y + h; ++row) {
+    tft.pushImage(x, row, w, 1, STANDBY_IMAGE + row * STANDBY_IMAGE_W + x);
+  }
+  tft.setSwapBytes(false);
+#else
+  for (int row = y; row < y + h; ++row) {
+    tft.drawFastHLine(x, row, w, blend565(rgb565(0x8b0a0a), T_BG, row * 255 / UI_SCREEN_H));
+  }
+#endif
+}
+
+// Text with a 1 px drop shadow, drawn straight onto the picture.
+void drawShadowText(const String &text, int x, int y, uint8_t font, uint16_t color) {
+  tft.setTextColor(TFT_BLACK);
+  tft.drawString(text, x + 1, y + 2, font);
+  tft.setTextColor(color);
+  tft.drawString(text, x, y, font);
+}
+
+String standbyKey() {
+  return currentClockText() + todayText() + (weather.has ? String(lroundf(weather.temp)) : String("-"));
+}
+
+void drawStandbyText() {
+  drawStandbyBackground(STANDBY_COL_X, 0, UI_SCREEN_W - STANDBY_COL_X, UI_SCREEN_H);
+  const String clock = currentClockText();  // "HH:MM" or "--:--"
+  tft.setTextDatum(TR_DATUM);
+  drawShadowText(clock.substring(0, 2), STANDBY_TEXT_R, 10, 6, T_TEXT);
+  drawShadowText(clock.substring(3, 5), STANDBY_TEXT_R, 64, 6, T_GOLD);
+
+  int d, m, y;
+  if (deckDate(d, m, y)) {
+    char text[16];
+    snprintf(text, sizeof(text), "%s %02d/%02d", WEEKDAY_SHORT[dayOfWeek(d, m, y)], d, m);
+    drawShadowText(text, STANDBY_TEXT_R, 126, 2, T_TEXT);
+    const LunarDate lunar = solarToLunar(d, m, y);
+    snprintf(text, sizeof(text), "%d/%d AL", lunar.day, lunar.month);
+    drawShadowText(text, STANDBY_TEXT_R, 144, 2, STANDBY_SOFT);
+  }
+
+  if (weather.has) {
+    const String temp = String(lroundf(weather.temp));
+    const int tempX = STANDBY_TEXT_R - 8;  // room for the degree sign
+    drawShadowText(temp, tempX, 188, 4, T_TEXT);
+    tft.drawCircle(STANDBY_TEXT_R - 3, 192, 3, T_TEXT);
+    const int iconX = tempX - tft.textWidth(temp, 4) - 30;
+    drawWeatherIcon(weather.icon, iconX, 190, 24, rgb565(0x200404));
+    drawShadowText(weather.city, STANDBY_TEXT_R, 220, 2, STANDBY_SOFT);
+  }
+  drawnStandbyKey = standbyKey();
+}
+
+void drawStandbyV2() {
+  drawStandbyBackground(0, 0, STANDBY_COL_X, UI_SCREEN_H);
+  drawStandbyText();
+}
+
+// Called every loop: no touch for the chosen time opens the standby screen.
+void uiUpdateStandby() {
+  const uint32_t timeout = sleepTimeoutMs(settings.standbyIndex);
+  if (timeout == 0 || screen == Screen::Standby || millis() - lastActivityMs < timeout) return;
+  bannerActive = false;
+  uiShow(Screen::Standby);
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -1157,7 +1245,7 @@ void uiRenderFullV2() {
     case Screen::Info: drawInfoV2(); break;
     case Screen::Claude: drawPlaceholderV2("CLAUDE CODE"); break;
     case Screen::AiTools: drawPlaceholderV2("AI TOOLS"); break;
-    case Screen::AiGpu: drawPlaceholderV2("AI GPU"); break;
+    case Screen::Standby: drawStandbyV2(); break;
     case Screen::Notify: drawNotifyV2(); break;
     case Screen::Settings: drawSettingsV2(); break;
   }
@@ -1183,6 +1271,7 @@ void uiRenderDynamicV2() {
   }
   if (screen == Screen::Settings && settingsTab == SET_CONNECT) drawConnectValues();
   if (screen == Screen::Settings && settingsTab == SET_DEVICE) drawDeviceValues();
+  if (screen == Screen::Standby && !bannerActive && standbyKey() != drawnStandbyKey) drawStandbyText();
   if (screen == Screen::Home) {
     // The banner covers the status bar; the full redraw after it repaints both.
     if (!bannerActive && homeChromeKey() != drawnHomeKey) {
@@ -1201,6 +1290,11 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
   if (bannerActive && y < BANNER_H) {
     bannerActive = false;
     uiShow(Screen::Notify);
+    return;
+  }
+  if (screen == Screen::Standby) {
+    uiShow(Screen::Home);
+    waitForRelease();
     return;
   }
   if (screen != Screen::Home && y < UI_HEADER_H && x < HOME_BTN_W) {

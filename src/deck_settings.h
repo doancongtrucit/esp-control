@@ -25,6 +25,7 @@ struct DeckSettings {
   bool ledOn = true;
   bool ledNight = true;     // LED off during quiet hours
   bool meetingTitles = false;
+  uint8_t standbyIndex = 2;  // after no touch: never, 1, 5, 15 minutes
 };
 
 constexpr size_t SETTINGS_BLOB_SIZE = 16;

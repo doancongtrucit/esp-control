@@ -73,6 +73,10 @@ void test_info_and_weather_icon_names() {
   }
 }
 
+void test_clock_icon_name() {
+  TEST_ASSERT_EQUAL(static_cast<int>(Icon::Clock), static_cast<int>(iconFromName("clock")));
+}
+
 void test_info_tab_strip_cells() {
   const CellRect first = gridCellIn(0, 5, 1, 6, 33, 308, 30, 3);
   const CellRect last = gridCellIn(4, 5, 1, 6, 33, 308, 30, 3);
@@ -100,6 +104,7 @@ void setup() {
   RUN_TEST(test_new_icon_names);
   RUN_TEST(test_info_and_weather_icon_names);
   RUN_TEST(test_info_tab_strip_cells);
+  RUN_TEST(test_clock_icon_name);
   RUN_TEST(test_weather_days_box_clears_the_footer);
   UNITY_END();
 }

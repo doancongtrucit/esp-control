@@ -1380,6 +1380,7 @@ void loop() {
   netLoop();
   updatePcLink();
   updateScreenSleep();
+  uiUpdateStandby();
 #endif
 
   if (fullRedrawRequested) {

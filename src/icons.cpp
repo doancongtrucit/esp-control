@@ -23,6 +23,7 @@ constexpr NamedIcon ICON_NAMES[] = {
     {"pie", Icon::Pie},           {"coin", Icon::Coin},             {"trend", Icon::Trend},
     {"cloud", Icon::Cloud},       {"calendar", Icon::Calendar},     {"sun", Icon::Sun},
     {"rain", Icon::Rain},         {"storm", Icon::Storm},           {"fog", Icon::Fog},
+    {"clock", Icon::Clock},
 };
 
 // Maps the 24-unit design grid onto the requested box.
@@ -355,6 +356,11 @@ void drawIcon(TFT_eSPI &tft, Icon icon, int x, int y, int size, uint16_t fg, uin
       p.line(4, 9, 20, 9);
       p.line(3, 13, 21, 13);
       p.line(5, 17, 19, 17);
+      break;
+    case Icon::Clock:
+      p.circle(12, 12, 9);
+      p.line(12, 12, 12, 7);
+      p.line(12, 12, 16, 14);
       break;
   }
 }

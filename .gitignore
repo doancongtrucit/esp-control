@@ -25,3 +25,6 @@ host/control-deck.log
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Personal standby picture (third-party image, never commit)
+src/standby_image.h

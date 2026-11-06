@@ -4,7 +4,8 @@ const char *const NOTIFY_APPS[NOTIFY_APP_COUNT] = {"Zalo", "Teams", "Outlook", "
                                                    "Messages", "Mail", "Phone", "Other"};
 
 namespace {
-constexpr uint8_t BLOB_VERSION = 1;
+constexpr uint8_t BLOB_VERSION = 2;  // 2 added the standby timer (byte 8)
+constexpr uint8_t STANDBY_DEFAULT = 2;
 constexpr uint8_t DUTY[BRIGHTNESS_LEVELS] = {25, 60, 110, 175, 255};
 constexpr uint32_t SLEEP_MS[SLEEP_OPTIONS] = {0, 60000UL, 300000UL, 900000UL};
 
@@ -60,10 +61,11 @@ void packSettings(const DeckSettings &s, uint8_t *blob) {
   blob[5] = s.quietEnd;
   blob[6] = s.mutedApps & 0xFF;
   blob[7] = s.mutedApps >> 8;
+  blob[8] = s.standbyIndex;
 }
 
 bool unpackSettings(const uint8_t *blob, size_t size, DeckSettings &out) {
-  if (size != SETTINGS_BLOB_SIZE || blob[0] != BLOB_VERSION) return false;
+  if (size != SETTINGS_BLOB_SIZE || blob[0] < 1 || blob[0] > BLOB_VERSION) return false;
   DeckSettings s;
   s.brightness = blob[1] < BRIGHTNESS_LEVELS ? blob[1] : BRIGHTNESS_LEVELS - 1;
   s.sleepIndex = blob[2] < SLEEP_OPTIONS ? blob[2] : 0;
@@ -79,6 +81,7 @@ bool unpackSettings(const uint8_t *blob, size_t size, DeckSettings &out) {
   s.quietStart = blob[4] % 24;
   s.quietEnd = blob[5] % 24;
   s.mutedApps = (blob[6] | (blob[7] << 8)) & ((1u << NOTIFY_APP_COUNT) - 1);
+  s.standbyIndex = blob[0] >= 2 && blob[8] < SLEEP_OPTIONS ? blob[8] : STANDBY_DEFAULT;
   out = s;
   return true;
 }
