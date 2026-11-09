@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 HERE = Path(__file__).resolve().parent
-STATUS_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
-                 "Stop", "SubagentStop", "SessionEnd")
-TOOL_EVENTS = {"PreToolUse", "PostToolUse"}
+STATUS_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+                 "Notification", "Stop", "SubagentStop", "SessionEnd")
+TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
 
 
 def is_deck_hook(handler: Any) -> bool:

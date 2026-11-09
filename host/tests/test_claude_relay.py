@@ -86,6 +86,29 @@ class RelayTests(unittest.TestCase):
         thread.join(3)
         self.assertEqual({"decision": "deny"}, result["reply"])
 
+    def test_always_reaches_the_hook_when_offered(self):
+        result = {}
+        payload = {**ASK, "always": "Bash(npm test:*)"}
+        thread = threading.Thread(target=lambda: result.update(reply=send(self.port, payload, read_reply=True)),
+                                  daemon=True)
+        thread.start()
+        self.assertTrue(wait_for(lambda: "ask" in self.frame()))
+        self.relay.answer(self.frame()["ask"]["id"], True, always=True)
+        thread.join(3)
+        self.assertEqual({"decision": "always"}, result["reply"])
+
+    def test_always_without_an_offer_is_a_plain_allow(self):
+        thread, result = self.ask_in_background()
+        self.relay.answer(self.frame()["ask"]["id"], True, always=True)
+        thread.join(3)
+        self.assertEqual({"decision": "allow"}, result["reply"])
+
+    def test_always_never_turns_a_deny_into_an_allow(self):
+        thread, result = self.ask_in_background()
+        self.relay.answer(self.frame()["ask"]["id"], False, always=True)
+        thread.join(3)
+        self.assertEqual({"decision": "deny"}, result["reply"])
+
     def test_stale_answer_is_ignored(self):
         thread, result = self.ask_in_background()
         self.relay.answer(999, True)
@@ -122,6 +145,62 @@ class RelayTests(unittest.TestCase):
 
     def test_listens_on_localhost_only(self):
         self.assertEqual("127.0.0.1", self.relay.host)
+
+
+class StatsTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "claude_stats.json"
+        self.day = "2026-11-09"
+        self.relay = ClaudeRelay(port=0, ask_wait=1.0, stats_path=self.path, today=lambda: self.day)
+        self.relay.start()
+
+    def tearDown(self):
+        self.relay.stop()
+        self.tmp.cleanup()
+
+    def stats(self):
+        return self.relay.stats_snapshot()[1]
+
+    def ask_and_answer(self, allow, always=False, offer=False):
+        payload = {**ASK, "always": "Bash(x:*)"} if offer else ASK
+        thread = threading.Thread(target=lambda: send(self.relay.port, payload, read_reply=True), daemon=True)
+        thread.start()
+        self.assertTrue(wait_for(lambda: "ask" in self.relay.snapshot()[1]))
+        if allow is not None:
+            self.relay.answer(self.relay.snapshot()[1]["ask"]["id"], allow, always=always)
+        thread.join(3)
+
+    def test_counts_asks_and_answers(self):
+        self.ask_and_answer(True)
+        self.ask_and_answer(False)
+        self.ask_and_answer(True, always=True, offer=True)
+        self.ask_and_answer(None)  # nobody answered: Claude Code asked on the PC
+        s = self.stats()
+        self.assertEqual({"type": "cstats", "ask": 4, "ok": 1, "al": 1, "no": 1, "pc": 1, "done": 0}, s)
+
+    def test_counts_finished_tasks(self):
+        send(self.relay.port, {"hook_event_name": "Stop", "session_id": "s1", "cwd": "D:/w/a"})
+        self.assertTrue(wait_for(lambda: self.stats()["done"] == 1))
+
+    def test_a_new_day_starts_from_zero(self):
+        send(self.relay.port, {"hook_event_name": "Stop", "session_id": "s1", "cwd": "D:/w/a"})
+        self.assertTrue(wait_for(lambda: self.stats()["done"] == 1))
+        self.day = "2026-11-10"
+        self.assertEqual(0, self.stats()["done"])
+
+    def test_counts_survive_a_restart(self):
+        send(self.relay.port, {"hook_event_name": "Stop", "session_id": "s1", "cwd": "D:/w/a"})
+        self.assertTrue(wait_for(lambda: self.stats()["done"] == 1))
+        self.relay.stop()
+        again = ClaudeRelay(port=0, stats_path=self.path, today=lambda: self.day)
+        self.assertEqual(1, again.stats_snapshot()[1]["done"])
+
+    def test_version_moves_when_counts_change(self):
+        v0 = self.relay.stats_snapshot()[0]
+        send(self.relay.port, {"hook_event_name": "Stop", "session_id": "s1", "cwd": "D:/w/a"})
+        self.assertTrue(wait_for(lambda: self.relay.stats_snapshot()[0] != v0))
 
 
 if __name__ == "__main__":

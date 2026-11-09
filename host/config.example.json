@@ -167,7 +167,8 @@
   "claude": {
     "enabled": true,
     "port": 47821,
-    "ask_wait_seconds": 25
+    "ask_wait_seconds": 25,
+    "usage": true
   },
   "coins": [
     "bitcoin",

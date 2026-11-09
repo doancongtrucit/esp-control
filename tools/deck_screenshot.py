@@ -60,16 +60,25 @@ def sample_frames() -> list[dict]:
 
 
 def claude_frame(ask: bool) -> dict:
-    """Made-up Claude Code sessions; "claude:1" also opens a permission prompt."""
+    """Made-up Claude Code sessions; "claude:3" also opens a permission prompt."""
     frame = {"type": "claude", "n": 5, "s": [
         ["project-1", "w", "Allow Bash?", 95],
-        ["project-2", "r", "Edit: ui_v2_screens.h", 480],
+        ["project-2", "r", "Failed: Bash: pytest", 480, 3],
         ["project-3", "d", "Task complete", 1500],
         ["project-4", "d", "Task complete", 4000]]}
     if ask:
         frame["ask"] = {"id": 1, "name": "project-1", "tool": "Bash",
-                        "cmd": "pio test -e cyd_2usb --upload-port COM4 --test-port COM4 -f test_claude_status"}
+                        "cmd": "pio test -e cyd_2usb --upload-port COM4 --test-port COM4 -f test_claude_status",
+                        "always": "Bash(pio test:*)"}
     return frame
+
+
+CLAUDE_USAGE = {"type": "cusage", "t": "22:09",
+                "day": {"in": 2188, "out": 1261074, "cw": 3007850, "cr": 456942508, "usd": 140.68},
+                "top": [["project-1", 101.67], ["project-2", 33.02], ["project-3", 2.86]],
+                "blk": {"usd": 35.78, "pct": 59, "left": 13845, "start": "21:00"},
+                "h": [0, 0, 0, 0, 0, 0, 0, 0, 0, 79, 67, 129, 74, 99, 112, 85, 78, 57, 31, 0, 0, 157, 46, 0]}
+CLAUDE_STATS = {"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
 
 
 class Deck:
@@ -134,8 +143,12 @@ def main() -> None:
     for target in args.targets:
         screen, _, tab = target.partition(":")
         if screen == "claude" and not args.no_data:
-            deck.send(claude_frame(ask=tab == "1"))
+            deck.send(claude_frame(ask=tab == "3"))
+            deck.send(CLAUDE_USAGE)
+            deck.send(CLAUDE_STATS)
             time.sleep(0.5)
+            if tab == "3":
+                tab = "0"
         image = deck.shot(screen, int(tab) if tab else -1)
         name = screen + (f"-{tab}" if tab else "")
         image.save(args.out / f"{name}.png")

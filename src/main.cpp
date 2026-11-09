@@ -282,6 +282,9 @@ uint32_t notifyFlashUntil = 0;
 #ifdef DECK_UI_V2
 ClaudeState claude;          // Claude Code sessions reported by the bridge
 uint32_t claudeRxMs = 0;     // when the last "claude" frame arrived (row ages count from it)
+ClaudeUsage claudeUsage;     // tokens and estimated cost today ("cusage")
+uint32_t claudeUsageRxMs = 0;
+ClaudeStats claudeStats;     // daily ask / answer / done counts ("cstats")
 #endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
@@ -299,6 +302,7 @@ void uiGoldChanged();
 void uiInfoFeedChanged(uint8_t tab);
 void uiLinksChanged();
 void uiClaudeFrame(const ClaudeState &next);
+void uiClaudeInfoChanged();
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -745,11 +749,12 @@ void sendSimpleFrame(const char *type) {
   sendFrame(doc);
 }
 
-void sendClaudeReply(uint32_t id, bool allow) {
+void sendClaudeReply(uint32_t id, bool allow, bool always = false) {
   JsonDocument doc;
   doc["type"] = "claude_reply";
   doc["id"] = id;
   doc["ok"] = allow;
+  if (always) doc["always"] = true;
   sendFrame(doc);
 }
 
@@ -1262,6 +1267,16 @@ void handleClaude(JsonDocument &doc) {
   uiClaudeFrame(next);
 }
 
+void handleClaudeUsage(JsonDocument &doc) {
+  if (!parseClaudeUsage(doc.as<JsonVariantConst>(), claudeUsage)) return;
+  claudeUsageRxMs = millis();
+  uiClaudeInfoChanged();
+}
+
+void handleClaudeStats(JsonDocument &doc) {
+  if (parseClaudeStats(doc.as<JsonVariantConst>(), claudeStats)) uiClaudeInfoChanged();
+}
+
 void handleNotify(JsonDocument &doc) {
   const char *src = doc["src"] | "pc";
   addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
@@ -1383,6 +1398,10 @@ void processSerialLine(const String &line) {
     handleNotify(doc);
   } else if (strcmp(type, "claude") == 0) {
     handleClaude(doc);
+  } else if (strcmp(type, "cusage") == 0) {
+    handleClaudeUsage(doc);
+  } else if (strcmp(type, "cstats") == 0) {
+    handleClaudeStats(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {

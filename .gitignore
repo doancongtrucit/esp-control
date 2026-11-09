@@ -31,3 +31,4 @@ src/standby_image.h
 
 # Device IP for other local apps (written by the bridge at runtime)
 host/device_state.json
+host/claude_stats.json

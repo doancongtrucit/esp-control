@@ -4,8 +4,9 @@ Claude Code runs host/claude_hook.py on its hook events; the hook forwards the
 event's JSON to the bridge, which feeds it to ClaudeTracker.apply(). Frame:
 
   {"type": "claude", "n": 5,                       sessions known (may exceed the rows)
-   "s": [["alpha", "w", "Allow Bash?", 12], ...],  up to 4: name, state, detail, age (s)
-   "ask": {"id": 3, "name": "alpha", "tool": "Bash", "cmd": "npm test"}}  oldest open ask
+   "s": [["alpha", "w", "Allow Bash?", 12, 0], ...],  up to 4: name, state, detail, age (s), fails in a row
+   "ask": {"id": 3, "name": "alpha", "tool": "Bash", "cmd": "npm test",  oldest open ask
+           "always": "Bash(npm test:*)"}}                                  only if Claude Code offers a rule
 
 States: "w" waiting for the user, "r" running, "d" done. Names are the last
 folder of the session's working directory; nothing leaves the PC except to the deck.
@@ -62,6 +63,7 @@ class Session:
     detail: str = "Ready"
     since: float = 0.0       # when the state last changed (drives the age column)
     last_seen: float = 0.0
+    fails: int = 0           # tool calls failed in a row
 
 
 @dataclass
@@ -71,6 +73,7 @@ class Ask:
     tool: str
     cmd: str
     opened: float
+    always: str = ""  # Claude Code's "don't ask again" rule, offered as ALWAYS on the deck
 
 
 @dataclass
@@ -102,8 +105,8 @@ class ClaudeTracker:
                 self._close_asks(sid)
                 self.version += 1
             return None
-        handlers = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
-                    "Notification", "Stop", "SubagentStop"}
+        handlers = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+                    "PermissionRequest", "Notification", "Stop", "SubagentStop"}
         if event not in handlers:
             return None
         if sid not in self.sessions:
@@ -114,7 +117,7 @@ class ClaudeTracker:
         if event == "PermissionRequest":
             self._close_asks(sid)
             ask = Ask(next(self._ids), sid, str(payload.get("tool_name") or "?"),
-                      tool.split(": ", 1)[1] if ": " in tool else "", now)
+                      tool.split(": ", 1)[1] if ": " in tool else "", now, _cut(payload.get("always") or ""))
             self.asks[ask.id] = ask
             self._set(sid, "w", _cut(f"Allow {ask.tool}?"), now)
             return ask.id
@@ -132,8 +135,14 @@ class ClaudeTracker:
         if event == "SessionStart":
             self._set(sid, "d", "Ready", now)
         elif event == "UserPromptSubmit":
+            self.sessions[sid].fails = 0
             self._set(sid, "r", "Working", now)
+        elif event == "PostToolUseFailure":
+            self.sessions[sid].fails += 1
+            self._set(sid, "r", _cut(f"Failed: {tool}"), now)
         elif event in ("PreToolUse", "PostToolUse"):
+            if event == "PostToolUse":
+                self.sessions[sid].fails = 0
             self._set(sid, "r", tool, now)
         elif event == "Stop":
             self._set(sid, "d", "Task complete", now)
@@ -183,9 +192,11 @@ class ClaudeTracker:
         frame: dict[str, Any] = {
             "type": "claude",
             "n": len(ordered),
-            "s": [[s.name, s.state, s.detail, int(max(0, now - s.since))] for s in ordered[:MAX_ROWS]],
+            "s": [[s.name, s.state, s.detail, int(max(0, now - s.since)), s.fails] for s in ordered[:MAX_ROWS]],
         }
         if self.asks:
             ask = min(self.asks.values(), key=lambda a: a.opened)
             frame["ask"] = {"id": ask.id, "name": self.sessions[ask.session].name, "tool": ask.tool, "cmd": ask.cmd}
+            if ask.always:
+                frame["ask"]["always"] = ask.always
         return frame

@@ -44,7 +44,7 @@ class TrackerTests(unittest.TestCase):
 
     def test_prompt_marks_the_session_running(self):
         self.t.apply(hook("UserPromptSubmit"), 10.0)
-        self.assertEqual([["alpha", "r", "Working", 90]], self.rows())
+        self.assertEqual([["alpha", "r", "Working", 90, 0]], self.rows())
 
     def test_tool_use_shows_what_it_is_doing(self):
         self.t.apply(hook("PreToolUse", tool_name="Bash", tool_input={"command": "pytest"}), 10.0)
@@ -53,7 +53,7 @@ class TrackerTests(unittest.TestCase):
     def test_stop_marks_it_done(self):
         self.t.apply(hook("UserPromptSubmit"), 10.0)
         self.t.apply(hook("Stop"), 20.0)
-        self.assertEqual(["alpha", "d", "Task complete", 80], self.rows()[0])
+        self.assertEqual(["alpha", "d", "Task complete", 80, 0], self.rows()[0])
 
     def test_permission_request_waits_and_opens_an_ask(self):
         ask = self.t.apply(hook("PermissionRequest", tool_name="Bash", tool_input={"command": "rm -rf build"}), 10.0)
@@ -61,6 +61,15 @@ class TrackerTests(unittest.TestCase):
         frame = self.t.frame(12.0)
         self.assertEqual("w", frame["s"][0][1])
         self.assertEqual({"id": ask, "name": "alpha", "tool": "Bash", "cmd": "rm -rf build"}, frame["ask"])
+
+    def test_ask_offers_always_when_the_hook_sent_a_label(self):
+        self.t.apply(hook("PermissionRequest", tool_name="Bash", tool_input={"command": "npm test"},
+                          always="Bash(npm test:*)"), 10.0)
+        self.assertEqual("Bash(npm test:*)", self.t.frame(11.0)["ask"]["always"])
+
+    def test_ask_without_label_has_no_always(self):
+        self.t.apply(hook("PermissionRequest", tool_name="Bash", tool_input={"command": "x"}), 10.0)
+        self.assertNotIn("always", self.t.frame(11.0)["ask"])
 
     def test_permission_notification_without_the_hook_still_waits(self):
         self.t.apply(hook("Notification", notification_type="permission_prompt",
@@ -120,6 +129,26 @@ class TrackerTests(unittest.TestCase):
             self.t.apply(hook("UserPromptSubmit", sid=str(i), cwd=f"/p/s{i}"), float(i))
         self.assertEqual(4, len(self.rows()))
         self.assertEqual(6, self.t.frame(100.0)["n"])
+
+    def test_rows_carry_a_failure_streak(self):
+        self.t.apply(hook("UserPromptSubmit"), 1.0)
+        self.assertEqual(0, self.rows()[0][4])
+        for i in range(3):
+            self.t.apply(hook("PostToolUseFailure", tool_name="Bash", tool_input={"command": "pytest"}), 2.0 + i)
+        row = self.rows()[0]
+        self.assertEqual(3, row[4])
+        self.assertEqual("r", row[1])
+        self.assertEqual("Failed: Bash: pytest", row[2])
+
+    def test_a_success_resets_the_streak(self):
+        self.t.apply(hook("PostToolUseFailure", tool_name="Bash", tool_input={"command": "pytest"}), 1.0)
+        self.t.apply(hook("PostToolUse", tool_name="Bash", tool_input={"command": "pytest"}), 2.0)
+        self.assertEqual(0, self.rows()[0][4])
+
+    def test_a_new_prompt_resets_the_streak(self):
+        self.t.apply(hook("PostToolUseFailure", tool_name="Bash", tool_input={"command": "x"}), 1.0)
+        self.t.apply(hook("UserPromptSubmit"), 2.0)
+        self.assertEqual(0, self.rows()[0][4])
 
     def test_session_end_removes_it(self):
         self.t.apply(hook("UserPromptSubmit"), 10.0)

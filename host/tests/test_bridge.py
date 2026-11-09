@@ -171,8 +171,8 @@ class FakeRelay:
     def __init__(self):
         self.calls = []
 
-    def answer(self, ask_id, allow):
-        self.calls.append(("answer", ask_id, allow))
+    def answer(self, ask_id, allow, always=False):
+        self.calls.append(("answer", ask_id, allow, always))
 
     def clear_done(self):
         self.calls.append(("clear",))
@@ -183,7 +183,9 @@ class ClaudeMessageTests(unittest.TestCase):
         relay = FakeRelay()
         self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 4, "ok": True}))
         self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 5, "ok": False}))
-        self.assertEqual([("answer", 4, True), ("answer", 5, False)], relay.calls)
+        self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 6, "ok": True, "always": True}))
+        self.assertEqual([("answer", 4, True, False), ("answer", 5, False, False), ("answer", 6, True, True)],
+                         relay.calls)
 
     def test_clear_done(self):
         relay = FakeRelay()
@@ -193,7 +195,7 @@ class ClaudeMessageTests(unittest.TestCase):
     def test_reply_without_ok_is_never_an_allow(self):
         relay = FakeRelay()
         bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 4})
-        self.assertEqual([("answer", 4, False)], relay.calls)
+        self.assertEqual([("answer", 4, False, False)], relay.calls)
 
     def test_other_messages_and_no_relay_are_not_handled(self):
         self.assertFalse(bridge.handle_claude_message(FakeRelay(), {"type": "macro", "id": 1}))

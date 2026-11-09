@@ -122,11 +122,26 @@ Claude Code sessions reported by the bridge's hook relay (see [CLAUDE_CODE.md](C
 
 ```json
 {"type": "claude", "n": 5,
- "s": [["project-1", "w", "Allow Bash?", 12], ["project-2", "r", "Edit: main.cpp", 480]],
- "ask": {"id": 7, "name": "project-1", "tool": "Bash", "cmd": "npm test"}}
+ "s": [["project-1", "w", "Allow Bash?", 12, 0], ["project-2", "r", "Failed: Bash: pytest", 480, 3]],
+ "ask": {"id": 7, "name": "project-1", "tool": "Bash", "cmd": "npm test", "always": "Bash(npm test:*)"}}
 ```
 
-`s` holds up to 4 rows: name (last folder of the session's working directory), state (`w` waiting for you, `r` running, `d` done), detail, age. `n` is the number of sessions known. `ask` is present while a permission prompt waits for an answer from the deck; a new `ask` opens the CLAUDE CODE screen.
+`s` holds up to 4 rows: name (last folder of the session's working directory), state (`w` waiting for you, `r` running, `d` done), detail, age, failed tool calls in a row (3 or more shows a FAIL badge). `ask.always` is present when Claude Code offers a "don't ask again" rule; the deck then shows an ALWAYS button. `n` is the number of sessions known. `ask` is present while a permission prompt waits for an answer from the deck; a new `ask` opens the CLAUDE CODE screen.
+
+### `cusage`, `cstats` (`cyd_2usb`)
+
+Usage and Stats tabs of the CLAUDE CODE screen. `cusage` comes from the Claude Code transcripts on the PC (about once a minute, only when something changed); `cstats` from the relay's daily counts.
+
+```json
+{"type": "cusage", "t": "22:09",
+ "day": {"in": 2188, "out": 1261074, "cw": 3007850, "cr": 456942508, "usd": 140.68},
+ "top": [["project-1", 101.67]],
+ "blk": {"usd": 35.78, "pct": 59, "left": 13845, "start": "21:00"},
+ "h": [0, 0, 0, 0, 0, 0, 0, 0, 0, 79, 67]}
+{"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
+```
+
+`usd` values are estimates at API rates. `blk` is the open 5-hour window (null when none); `pct` compares it with the biggest window in the last 30 days, `left` is seconds until it closes. `h` counts Claude replies per hour today. In `cstats`: asks, Allow / Always / Deny on the deck, prompts answered on the PC (or timed out), finished tasks.
 
 ### `wifi` (`cyd_2usb`)
 
@@ -199,11 +214,12 @@ The ESP32 sends only the numeric ID. The trusted action remains in the local `ho
 
 ```json
 {"type":"claude_reply","id":7,"ok":true}
+{"type":"claude_reply","id":7,"ok":true,"always":true}
 {"type":"claude_clear"}
 {"type":"claude_open","name":"project-1"}
 ```
 
-`claude_reply` answers the open `ask` (`ok` true = Allow, anything else = Deny); the device sends Allow only after a 1 s hold. Replies for an ask that is no longer open are ignored. `claude_clear` removes finished sessions; `claude_open` asks the bridge to bring that session's window to the front (best effort, Windows only).
+`claude_reply` answers the open `ask` (`ok` true = Allow, anything else = Deny; `always` adds Claude Code's suggested rule, only if that ask offered one); the device sends Allow and Always only after a 1 s hold. Replies for an ask that is no longer open are ignored. `claude_clear` removes finished sessions; `claude_open` asks the bridge to bring that session's window to the front (best effort, Windows only).
 
 ### `error`
 

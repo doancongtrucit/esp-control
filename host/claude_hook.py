@@ -24,9 +24,28 @@ KEEP_INPUT = ("command", "file_path", "notebook_path", "url", "pattern", "query"
 MAX_VALUE = 200
 
 
+def always_label(suggestions: Any) -> str:
+    """Short text for Claude Code's first "don't ask again" suggestion, e.g. "Bash(npm test:*)"."""
+    if not isinstance(suggestions, list) or not suggestions or not isinstance(suggestions[0], dict):
+        return ""
+    first = suggestions[0]
+    if first.get("type") == "setMode":
+        return f"mode: {first.get('mode', '?')}"
+    rules = first.get("rules") or []
+    if rules and isinstance(rules[0], dict):
+        rule = rules[0]
+        content = rule.get("ruleContent")
+        text = f"{rule.get('toolName', '?')}({content})" if content else str(rule.get("toolName", "?"))
+        return text[:60]
+    return str(first.get("type", ""))[:60]
+
+
 def trim_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Only what the deck shows: no transcript paths, prompts, responses or file contents."""
     trimmed = {k: v for k, v in payload.items() if k not in DROP_FIELDS}
+    label = always_label(payload.get("permission_suggestions"))
+    if label:
+        trimmed["always"] = label
     tool_input = payload.get("tool_input")
     if isinstance(tool_input, dict):
         trimmed["tool_input"] = {k: str(tool_input[k])[:MAX_VALUE] for k in KEEP_INPUT if tool_input.get(k)}
@@ -36,9 +55,12 @@ def trim_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return trimmed
 
 
-def decision_output(decision: Any) -> str:
-    if decision == "allow":
+def decision_output(decision: Any, suggestions: Any = None) -> str:
+    """Hook stdout for the deck's answer; "always" also adds Claude Code's suggested rules."""
+    if decision in ("allow", "always"):
         body: dict[str, Any] = {"behavior": "allow"}
+        if decision == "always" and isinstance(suggestions, list) and suggestions:
+            body["updatedPermissions"] = suggestions
     elif decision == "deny":
         body = {"behavior": "deny", "message": "Denied on the Control Deck."}
     else:
@@ -76,7 +98,7 @@ def main(argv: list[str] | None = None, stdin: TextIO = sys.stdin, stdout: TextI
         payload = json.loads(stdin.read())
         if not isinstance(payload, dict):
             return 0
-        text = decision_output(relay(payload, args.port, args.wait))
+        text = decision_output(relay(payload, args.port, args.wait), payload.get("permission_suggestions"))
         if text:
             stdout.write(text)
     except (Exception, SystemExit):  # never block Claude Code

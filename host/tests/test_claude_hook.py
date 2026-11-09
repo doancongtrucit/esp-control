@@ -74,6 +74,26 @@ class TrimTests(unittest.TestCase):
         self.assertNotIn("content", trimmed["tool_input"])
 
 
+SUGGESTIONS = [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "npm test:*"}], "behavior": "allow", "destination": "localSettings"}]
+
+
+class SuggestionTests(unittest.TestCase):
+    def test_rule_suggestion_becomes_a_short_label(self):
+        self.assertEqual("Bash(npm test:*)", claude_hook.always_label(SUGGESTIONS))
+
+    def test_mode_suggestion_label(self):
+        self.assertEqual("mode: acceptEdits", claude_hook.always_label([{"type": "setMode", "mode": "acceptEdits"}]))
+
+    def test_no_suggestion_no_label(self):
+        self.assertEqual("", claude_hook.always_label(None))
+        self.assertEqual("", claude_hook.always_label([]))
+
+    def test_trim_sends_the_label_not_the_suggestions(self):
+        trimmed = claude_hook.trim_payload({**ASK, "permission_suggestions": SUGGESTIONS})
+        self.assertNotIn("permission_suggestions", trimmed)
+        self.assertEqual("Bash(npm test:*)", trimmed["always"])
+
+
 class DecisionOutputTests(unittest.TestCase):
     def test_allow(self):
         self.assertEqual({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
@@ -84,6 +104,14 @@ class DecisionOutputTests(unittest.TestCase):
         decision = json.loads(claude_hook.decision_output("deny"))["hookSpecificOutput"]["decision"]
         self.assertEqual("deny", decision["behavior"])
         self.assertIn("Control Deck", decision["message"])
+
+    def test_always_allows_and_adds_the_suggested_rules(self):
+        decision = json.loads(claude_hook.decision_output("always", SUGGESTIONS))["hookSpecificOutput"]["decision"]
+        self.assertEqual({"behavior": "allow", "updatedPermissions": SUGGESTIONS}, decision)
+
+    def test_always_without_suggestions_is_a_plain_allow(self):
+        decision = json.loads(claude_hook.decision_output("always", None))["hookSpecificOutput"]["decision"]
+        self.assertEqual({"behavior": "allow"}, decision)
 
     def test_anything_else_prints_nothing(self):
         self.assertEqual("", claude_hook.decision_output(None))
@@ -104,6 +132,12 @@ class MainTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual("allow", json.loads(out)["hookSpecificOutput"]["decision"]["behavior"])
         self.assertNotIn("transcript_path", json.loads(bridge.received))
+
+    def test_deck_always_uses_the_payloads_suggestions(self):
+        bridge = FakeBridge(reply=b'{"decision": "always"}\n')
+        _, out = run({**ASK, "permission_suggestions": SUGGESTIONS}, bridge.port)
+        decision = json.loads(out)["hookSpecificOutput"]["decision"]
+        self.assertEqual(SUGGESTIONS, decision["updatedPermissions"])
 
     def test_deck_deny_becomes_the_hook_decision(self):
         bridge = FakeBridge(reply=b'{"decision": "deny"}\n')

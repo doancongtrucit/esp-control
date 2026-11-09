@@ -1383,7 +1383,6 @@ constexpr int CL_BADGE_W = 64;
 // Permission card: project, tool, command, then DENY (tap) and ALLOW (hold) buttons.
 constexpr int CL_CARD_Y = 38, CL_CARD_H = 196;
 constexpr int CL_ASK_BTN_Y = 182, CL_ASK_BTN_H = 44;
-constexpr int CL_ASK_SPLIT = UI_SCREEN_W / 2;  // DENY left of it, ALLOW right
 constexpr uint16_t T_RUN = T_ACCENT_2;      // #7fa9ee
 constexpr uint16_t T_OPEN_BTN = 0x2B7C;     // #2f6fe4
 constexpr uint16_t T_DENY_BG = 0x5124;      // #522420
@@ -1422,6 +1421,15 @@ void drawClaudeBadge(int x, int y, ClaudeRunState state, uint16_t bg) {
   uiTextIn(UiFont::Tiny, label, x + CL_BADGE_W / 2, y + 9);
 }
 
+constexpr uint8_t CLAUDE_FAIL_BADGE = 3;  // this many failed tool calls in a row: red badge
+
+void drawClaudeFailBadge(int x, int y, uint8_t fails) {
+  tft.fillRoundRect(x, y, CL_BADGE_W, 18, 5, T_BADGE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_TEXT, T_BADGE);
+  uiTextIn(UiFont::Tiny, String("FAIL x") + fails, x + CL_BADGE_W / 2, y + 9);
+}
+
 void drawClaudeRow(int i) {
   const ClaudeRow &row = claude.rows[i];
   const int y = CL_ROW_Y + i * CL_ROW_STEP;
@@ -1432,7 +1440,11 @@ void drawClaudeRow(int i) {
     tft.drawRoundRect(CL_X, y, CL_W, CL_ROW_H, 8, T_ACCENT);
     tft.drawRoundRect(CL_X + 1, y + 1, CL_W - 2, CL_ROW_H - 2, 7, T_ACCENT);
   }
-  drawClaudeBadge(CL_X + 6, y + (CL_ROW_H - 18) / 2, row.state, bg);
+  if (row.fails >= CLAUDE_FAIL_BADGE && row.state == ClaudeRunState::Running) {
+    drawClaudeFailBadge(CL_X + 6, y + (CL_ROW_H - 18) / 2, row.fails);
+  } else {
+    drawClaudeBadge(CL_X + 6, y + (CL_ROW_H - 18) / 2, row.state, bg);
+  }
   const int textX = CL_X + CL_BADGE_W + 12;
   const int textW = CL_X + CL_W - 34 - textX;
   drawViText(tft, textX, y + 2, fitViText(row.name, textW, true), T_TEXT, bg, true);
@@ -1474,19 +1486,34 @@ void claudeTwoLines(const String &text, int w, String &a, String &b) {
   if (a.length() < text.length()) b = claudeFit(text.substring(a.length()), UiFont::Body, w);
 }
 
-void drawClaudeAskButtons() {
-  const int denyX = CL_X + 8, allowX = CL_ASK_SPLIT + 4, w = CL_ASK_SPLIT - 4 - denyX;
-  tft.fillRoundRect(denyX, CL_ASK_BTN_Y, w, CL_ASK_BTN_H, 8, T_DENY_BG);
-  tft.fillRoundRect(allowX, CL_ASK_BTN_Y, w, CL_ASK_BTN_H, 8, T_ALLOW_BG);
+constexpr uint16_t T_ALWAYS_BG = 0x0A8D;  // #14506a
+constexpr int CL_ASK_LEFT = CL_X + 8, CL_ASK_RIGHT = CL_X + CL_W - 8, CL_ASK_GAP = 6;
+
+int claudeAskButtons() { return claude.askAlways.length() ? 3 : 2; }
+int claudeAskButtonW() { return (CL_ASK_RIGHT - CL_ASK_LEFT - (claudeAskButtons() - 1) * CL_ASK_GAP) / claudeAskButtons(); }
+int claudeAskButtonX(int i) { return CL_ASK_LEFT + i * (claudeAskButtonW() + CL_ASK_GAP); }
+
+// Button index under x: 0 DENY, 1 ALLOW, 2 ALWAYS (-1 in a gap).
+int claudeAskButtonAt(int x) {
+  for (int i = 0; i < claudeAskButtons(); ++i)
+    if (x >= claudeAskButtonX(i) && x < claudeAskButtonX(i) + claudeAskButtonW()) return i;
+  return -1;
+}
+
+void drawClaudeAskButton(int i) {
+  static const char *const LABELS[3] = {"DENY", "ALLOW", "ALWAYS"};
+  static const uint16_t COLORS[3] = {T_DENY_BG, T_ALLOW_BG, T_ALWAYS_BG};
+  const int x = claudeAskButtonX(i), w = claudeAskButtonW();
+  tft.fillRoundRect(x, CL_ASK_BTN_Y, w, CL_ASK_BTN_H, 8, COLORS[i]);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(T_TEXT, T_DENY_BG);
-  uiTextIn(UiFont::BodyBold, "DENY", denyX + w / 2, CL_ASK_BTN_Y + 15);
-  tft.setTextColor(T_MUTED, T_DENY_BG);
-  uiTextIn(UiFont::Tiny, "tap", denyX + w / 2, CL_ASK_BTN_Y + 32);
-  tft.setTextColor(T_TEXT, T_ALLOW_BG);
-  uiTextIn(UiFont::BodyBold, "ALLOW", allowX + w / 2, CL_ASK_BTN_Y + 15);
-  tft.setTextColor(T_MUTED, T_ALLOW_BG);
-  uiTextIn(UiFont::Tiny, "hold 1 s", allowX + w / 2, CL_ASK_BTN_Y + 32);
+  tft.setTextColor(T_TEXT, COLORS[i]);
+  uiTextIn(UiFont::BodyBold, LABELS[i], x + w / 2, CL_ASK_BTN_Y + 15);
+  tft.setTextColor(T_MUTED, COLORS[i]);
+  uiTextIn(UiFont::Tiny, i == 0 ? "tap" : "hold 1 s", x + w / 2, CL_ASK_BTN_Y + 32);
+}
+
+void drawClaudeAskButtons() {
+  for (int i = 0; i < claudeAskButtons(); ++i) drawClaudeAskButton(i);
 }
 
 void drawClaudeAsk() {
@@ -1503,20 +1530,163 @@ void drawClaudeAsk() {
            CL_CARD_Y + 54);
   // Command (or file / URL) in a dark well, up to two lines.
   const int wellY = CL_CARD_Y + 74;
-  tft.fillRoundRect(CL_X + 10, wellY, CL_W - 20, 62, 6, T_BG);
+  const bool rule = claude.askAlways.length() > 0;
+  tft.fillRoundRect(CL_X + 10, wellY, CL_W - 20, rule ? 50 : 62, 6, T_BG);
   String a, b;
   claudeTwoLines(claude.askCmd.length() ? claude.askCmd : claude.askTool, CL_W - 36, a, b);
   tft.setTextColor(T_TEXT, T_BG);
-  uiTextIn(UiFont::Body, a, CL_X + 18, wellY + 10);
-  uiTextIn(UiFont::Body, b, CL_X + 18, wellY + 32);
+  uiTextIn(UiFont::Body, a, CL_X + 18, wellY + (rule ? 5 : 10));
+  uiTextIn(UiFont::Body, b, CL_X + 18, wellY + (rule ? 26 : 32));
+  if (rule) {
+    tft.setTextColor(T_MUTED, T_ALERT_BG);
+    uiTextIn(UiFont::Small, claudeFit(String("Always: ") + claude.askAlways, UiFont::Small, CL_W - 20), CL_X + 10,
+             wellY + 54);
+  }
   drawClaudeAskButtons();
 }
 
+// ---------- Claude Code: Usage and Stats tabs (swipe from the session list) ----------
+
+enum ClaudeTab : uint8_t { CLAUDE_SESSIONS, CLAUDE_USAGE, CLAUDE_STATS, CLAUDE_TABS };
+uint8_t claudeTab = CLAUDE_SESSIONS;
+constexpr uint16_t T_BAR_BG = 0x29A8;  // #2e3442
+
+void drawClaudeTabDots() {
+  for (int i = 0; i < CLAUDE_TABS; ++i)
+    tft.fillCircle(190 + i * 10, UI_HEADER_H / 2, 3, i == claudeTab ? T_TEXT : T_DIVIDER);
+}
+
+void drawClaudeLabel(int x, int y, const char *label, uint16_t bg) {
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_MUTED, bg);
+  uiTextIn(UiFont::Tiny, label, x, y);
+}
+
+String claudeUsd(float usd) { return String("$") + String(usd, usd < 100 ? 2 : 0); }
+
+void drawClaudeUsage() {
+  if (!claudeUsage.has) {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(T_MUTED, T_SURFACE);
+    uiText("Reading Claude Code logs...", UI_SCREEN_W / 2, 130, 2);
+    return;
+  }
+  const ClaudeUsage &u = claudeUsage;
+  // Today: estimated cost and token kinds
+  tft.fillRoundRect(CL_X, 38, CL_W, 62, 8, T_CARD);
+  drawClaudeLabel(CL_X + 10, 44, "TODAY  (est. at API rates)", T_CARD);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_TEXT, T_CARD);
+  uiTextIn(UiFont::Large, claudeUsd(u.usd), CL_X + 10, 76);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(T_MUTED, T_CARD);
+  uiTextIn(UiFont::Small, String("in ") + claudeTokens(u.input) + "   out " + claudeTokens(u.output),
+           CL_X + CL_W - 10, 66);
+  uiTextIn(UiFont::Small, String("cache w ") + claudeTokens(u.cacheWrite) + "   r " + claudeTokens(u.cacheRead),
+           CL_X + CL_W - 10, 86);
+
+  // Current 5-hour window, compared with the biggest one so far
+  tft.fillRoundRect(CL_X, 106, CL_W, 58, 8, T_CARD);
+  drawClaudeLabel(CL_X + 10, 112, "5-HOUR WINDOW  (vs your peak)", T_CARD);
+  if (u.window) {
+    const uint32_t passed = (millis() - claudeUsageRxMs) / 1000UL;
+    const uint32_t left = u.windowLeftSec > passed ? u.windowLeftSec - passed : 0;
+    const int barW = CL_W - 20;
+    const uint16_t fill = u.windowPct >= 90 ? T_DOWN : (u.windowPct >= 70 ? T_ACCENT : T_UP);
+    tft.fillRoundRect(CL_X + 10, 128, barW, 8, 4, T_BAR_BG);
+    tft.fillRoundRect(CL_X + 10, 128, max(8, barW * min<int>(u.windowPct, 100) / 100), 8, 4, fill);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(T_TEXT, T_CARD);
+    uiTextIn(UiFont::BodyBold, String(u.windowPct) + "%", CL_X + 10, 150);
+    tft.setTextColor(T_MUTED, T_CARD);
+    uiTextIn(UiFont::Small, claudeUsd(u.windowUsd) + " since " + u.windowStart, CL_X + 56, 150);
+    tft.setTextDatum(MR_DATUM);
+    uiTextIn(UiFont::Small, String("reset in ") + claudeDuration(left), CL_X + CL_W - 10, 150);
+  } else {
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(T_MUTED, T_CARD);
+    uiTextIn(UiFont::Small, "No open window - the next message starts one", CL_X + 10, 140);
+  }
+
+  // Top projects today
+  drawClaudeLabel(CL_X + 2, 170, "TOP TODAY", T_SURFACE);
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextColor(T_MUTED, T_SURFACE);
+  uiTextIn(UiFont::Tiny, String("updated ") + u.time, CL_X + CL_W, 170);
+  const float most = u.topCount ? u.top[0].usd : 0;
+  for (uint8_t i = 0; i < u.topCount; ++i) {
+    const int y = 184 + i * 18;
+    const int barMax = 90;
+    tft.fillRoundRect(CL_X + 150, y + 5, barMax, 6, 3, T_BAR_BG);
+    if (most > 0) tft.fillRoundRect(CL_X + 150, y + 5, max(6, static_cast<int>(barMax * u.top[i].usd / most)), 6, 3, T_RUN);
+    drawViText(tft, CL_X + 2, y - 1, fitViText(u.top[i].name, 140), T_TEXT, T_SURFACE);
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(T_TEXT, T_SURFACE);
+    uiTextIn(UiFont::Small, claudeUsd(u.top[i].usd), CL_X + CL_W, y + 1);
+  }
+}
+
+void drawClaudeStatTile(int i, const char *label, uint16_t value, uint16_t color) {
+  const int w = (CL_W - 12) / 3, h = 30;
+  const int x = CL_X + (i % 3) * (w + 6), y = 170 + (i / 3) * (h + 4);
+  tft.fillRoundRect(x, y, w, h, 6, T_CARD);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(color, T_CARD);
+  uiTextIn(UiFont::BodyBold, String(value), x + 8, y + h / 2);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(T_MUTED, T_CARD);
+  uiTextIn(UiFont::Tiny, label, x + w - 6, y + h / 2);
+}
+
+void drawClaudeStats() {
+  // Assistant messages per hour today
+  drawClaudeLabel(CL_X + 2, 38, "ACTIVITY TODAY  (Claude replies per hour)", T_SURFACE);
+  const int chartX = CL_X + 2, chartY = 54, chartH = 92, slot = (CL_W - 4) / 24;
+  const uint16_t peak = claudeUsage.peakHour();
+  const int hourNow = clockHour();
+  tft.drawFastHLine(chartX, chartY + chartH, slot * 24, T_DIVIDER);
+  for (int h = 0; h < 24; ++h) {
+    const uint16_t n = claudeUsage.hours[h];
+    const int barH = peak ? max<int>(n ? 2 : 0, chartH * n / peak) : 0;
+    if (barH) tft.fillRect(chartX + h * slot + 2, chartY + chartH - barH, slot - 3, barH, h == hourNow ? T_ACCENT : T_RUN);
+  }
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(T_MUTED, T_SURFACE);
+  for (int h = 0; h < 24; h += 6) uiTextIn(UiFont::Tiny, String(h), chartX + h * slot + slot / 2, chartY + chartH + 4);
+  if (peak) {
+    tft.setTextDatum(TR_DATUM);
+    uiTextIn(UiFont::Tiny, String("peak ") + peak, CL_X + CL_W, 38);
+  }
+  // Daily counts from the bridge
+  const ClaudeStats &s = claudeStats;
+  drawClaudeStatTile(0, "ASKS", s.asks, T_ACCENT);
+  drawClaudeStatTile(1, "ALLOW", s.allowed, T_UP);
+  drawClaudeStatTile(2, "ALWAYS", s.always, T_RUN);
+  drawClaudeStatTile(3, "DENY", s.denied, T_DOWN);
+  drawClaudeStatTile(4, "ON PC", s.onPc, T_TEXT);
+  drawClaudeStatTile(5, "DONE", s.done, T_GOLD);
+}
+
+void uiClaudeInfoChanged() {
+  if (screen == Screen::Claude && !claude.askId && claudeTab != CLAUDE_SESSIONS) fullRedrawRequested = true;
+}
+
 void drawClaudeV2() {
-  drawHeaderV2("CLAUDE CODE", true);
+  static const char *const TITLES[CLAUDE_TABS] = {"CLAUDE CODE", "CLAUDE USAGE", "CLAUDE STATS"};
   claudeDrawnMinute = millis() / 60000UL;
   if (claude.askId) {
+    drawHeaderV2("CLAUDE CODE", true);
     drawClaudeAsk();
+    return;
+  }
+  drawHeaderV2(TITLES[claudeTab], true);
+  drawClaudeTabDots();
+  if (claudeTab == CLAUDE_USAGE) {
+    drawClaudeUsage();
+    return;
+  }
+  if (claudeTab == CLAUDE_STATS) {
+    drawClaudeStats();
     return;
   }
   if (claude.count == 0) {
@@ -1529,7 +1699,7 @@ void drawClaudeV2() {
   if (claude.total > claude.count) {  // more sessions than rows: count them in the header
     tft.setTextDatum(ML_DATUM);
     tft.setTextColor(T_MUTED, T_BG);
-    uiTextIn(UiFont::Small, String("+") + (claude.total - claude.count) + " more",
+    uiTextIn(UiFont::Small, String("+") + (claude.total - claude.count),
              50 + uiTextWidthIn(UiFont::BodyBold, "CLAUDE CODE"), UI_HEADER_H / 2);
   }
   const bool waiting = claudeWaitingRow() >= 0;
@@ -1537,15 +1707,15 @@ void drawClaudeV2() {
   drawClaudeButton(CL_X + CL_BTN_W + 6, "CLEAR DONE", Icon::Clipboard, T_CARD, claudeHasDone());
 }
 
-// ALLOW needs the finger on the button for HOLD_CONFIRM_MS; a bar fills under the label.
-bool claudeHoldAllow() {
-  const int x = CL_ASK_SPLIT + 4, w = CL_ASK_SPLIT - 12 - CL_X;
+// ALLOW and ALWAYS need the finger on the button for HOLD_CONFIRM_MS; a bar fills under the label.
+bool claudeHoldButton(int i) {
+  const int x = claudeAskButtonX(i), w = claudeAskButtonW();
   const uint32_t start = millis();
   int misses = 0;
   while (millis() - start < HOLD_CONFIRM_MS) {
     misses = touchHeld() ? 0 : misses + 1;
     if (misses >= 3) {
-      drawClaudeAskButtons();
+      drawClaudeAskButton(i);
       return false;
     }
     tft.fillRect(x + 6, CL_ASK_BTN_Y + CL_ASK_BTN_H - 5, (w - 12) * (millis() - start) / HOLD_CONFIRM_MS, 3, T_TEXT);
@@ -1576,12 +1746,13 @@ void touchClaudeV2(uint16_t x, uint16_t y) {
   if (claude.askId) {
     if (y < CL_ASK_BTN_Y || y > CL_ASK_BTN_Y + CL_ASK_BTN_H) return;
     const uint32_t id = claude.askId;
-    if (x < CL_ASK_SPLIT) {
+    const int button = claudeAskButtonAt(x);
+    if (button == 0) {
       sendClaudeReply(id, false);
       waitForRelease();
       claudeAnswered();
-    } else if (claudeHoldAllow()) {
-      sendClaudeReply(id, true);
+    } else if (button > 0 && claudeHoldButton(button)) {
+      sendClaudeReply(id, true, button == 2);
       ledFlashUntil = millis() + 150;
       waitForRelease();
       claudeAnswered();
@@ -1591,7 +1762,7 @@ void touchClaudeV2(uint16_t x, uint16_t y) {
     lastTouchMs = millis();
     return;
   }
-  if (y < CL_BTN_Y) return;
+  if (claudeTab != CLAUDE_SESSIONS || y < CL_BTN_Y) return;
   if (x < CL_X + CL_BTN_W) {
     const int row = claudeWaitingRow();
     if (row >= 0) sendClaudeOpen(claude.rows[row].name);
@@ -1661,6 +1832,7 @@ void uiRenderDynamicV2() {
   if (screen == Screen::Monitor) drawMonitorV2Dynamic();
   // Row ages tick once a minute.
   if (screen == Screen::Claude && !claude.askId && millis() / 60000UL != claudeDrawnMinute) fullRedrawRequested = true;
+
   // A new day: the calendar's "today" moves.
   static int drawnDay = -1;
   int d, m, y;
@@ -1728,6 +1900,7 @@ void uiOpenForShot(const char *name, int tab) {
   if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
   if (tab >= 0 && screen == Screen::Settings) settingsTab = tab % SET_TABS;
   if (tab >= 0 && screen == Screen::Controls) controlsPage = tab % MACRO_PAGES;
+  if (tab >= 0 && screen == Screen::Claude) claudeTab = tab % CLAUDE_TABS;
   bannerActive = false;
   lastActivityMs = millis();
 }
@@ -1738,6 +1911,10 @@ void uiSwipeV2(int step) {
     case Screen::Info: infoTab = (infoTab + INFO_TABS + step) % INFO_TABS; break;
     case Screen::Settings: settingsTab = (settingsTab + SET_TABS + step) % SET_TABS; break;
     case Screen::Controls: controlsPage = (controlsPage + MACRO_PAGES + step) % MACRO_PAGES; break;
+    case Screen::Claude:
+      if (claude.askId) return;
+      claudeTab = (claudeTab + CLAUDE_TABS + step) % CLAUDE_TABS;
+      break;
     case Screen::Standby: uiShow(Screen::Home); return;
     default: return;
   }

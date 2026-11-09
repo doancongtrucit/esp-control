@@ -1124,7 +1124,8 @@ def start_claude_relay(config: dict[str, Any]) -> Any:
     from claude_relay import ClaudeRelay
 
     relay = ClaudeRelay(port=int(settings.get("port", 47821)),
-                        ask_wait=float(settings.get("ask_wait_seconds", 25)), log=log)
+                        ask_wait=float(settings.get("ask_wait_seconds", 25)), log=log,
+                        stats_path=Path(__file__).resolve().parent / "claude_stats.json")
     try:
         relay.start()
     except OSError as exc:
@@ -1132,6 +1133,18 @@ def start_claude_relay(config: dict[str, Any]) -> Any:
         return None
     log(f"Claude Code relay listening on 127.0.0.1:{relay.port}")
     return relay
+
+
+def start_claude_usage(config: dict[str, Any]) -> Any:
+    """Token usage and estimated cost from ~/.claude/projects for the deck's Usage tab; None when off."""
+    settings = config.get("claude", {})
+    if not settings.get("enabled", True) or not settings.get("usage", True):
+        return None
+    from claude_usage import UsageFeed
+
+    feed = UsageFeed(Path.home() / ".claude" / "projects", log=log)
+    feed.start()
+    return feed
 
 
 def focus_window(name: str) -> None:
@@ -1173,7 +1186,7 @@ def handle_claude_message(relay: Any, message: dict[str, Any]) -> bool:
     if relay is None:
         return True
     if message_type == "claude_reply":
-        relay.answer(int(message.get("id", 0)), message.get("ok") is True)
+        relay.answer(int(message.get("id", 0)), message.get("ok") is True, always=message.get("always") is True)
     elif message_type == "claude_clear":
         relay.clear_done()
     else:
@@ -1194,6 +1207,7 @@ def run(config: dict[str, Any]) -> None:
     feeds.start()
     toasts = start_pc_notifications(config)
     claude = start_claude_relay(config)
+    claude_usage = start_claude_usage(config)
 
     psutil.cpu_percent(interval=None)
     previous = current_counters()
@@ -1239,6 +1253,8 @@ def run(config: dict[str, Any]) -> None:
                 sent_info_version = -1
                 sent_feed_versions: dict[str, int] = {}
                 sent_claude_version = -1
+                sent_claude_stats = -1
+                sent_claude_usage = -1
                 device_wifi: tuple[str, int] | None = None
                 receive_buffer = bytearray()
 
@@ -1264,6 +1280,15 @@ def run(config: dict[str, Any]) -> None:
                         if claude_version != sent_claude_version:
                             send_json(serial_port, claude_frame)
                             sent_claude_version = claude_version
+                        stats_version, stats_frame = claude.stats_snapshot()
+                        if stats_version != sent_claude_stats:
+                            send_json(serial_port, stats_frame)
+                            sent_claude_stats = stats_version
+                    if claude_usage is not None:
+                        usage_version, usage_frame = claude_usage.snapshot()
+                        if usage_frame is not None and usage_version != sent_claude_usage:
+                            send_json(serial_port, usage_frame)
+                            sent_claude_usage = usage_version
 
                     forward_pc_toasts(toasts, serial_port, device_wifi, config)
 
@@ -1303,6 +1328,8 @@ def run(config: dict[str, Any]) -> None:
                                 sent_info_version = -1  # device rebooted: resend INFO
                                 sent_feed_versions.clear()
                                 sent_claude_version = -1
+                                sent_claude_stats = -1
+                                sent_claude_usage = -1
                                 device_wifi = None
                             elif message_type == "wifi_status":
                                 if message.get("connected") and message.get("ip"):
