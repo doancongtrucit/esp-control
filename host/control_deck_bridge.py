@@ -1116,6 +1116,71 @@ class InfoFeed:
                 self.version += 1
 
 
+def start_claude_relay(config: dict[str, Any]) -> Any:
+    """Localhost relay for Claude Code hooks (docs/CLAUDE_CODE.md); None when off or the port is taken."""
+    settings = config.get("claude", {})
+    if not settings.get("enabled", True):
+        return None
+    from claude_relay import ClaudeRelay
+
+    relay = ClaudeRelay(port=int(settings.get("port", 47821)),
+                        ask_wait=float(settings.get("ask_wait_seconds", 25)), log=log)
+    try:
+        relay.start()
+    except OSError as exc:
+        log(f"Claude Code relay not started: {exc}")
+        return None
+    log(f"Claude Code relay listening on 127.0.0.1:{relay.port}")
+    return relay
+
+
+def focus_window(name: str) -> None:
+    """Best effort: bring forward a window whose title has the session name, else a Claude window."""
+    if platform.system() != "Windows":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    titles: list[tuple[int, str]] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def collect(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length:
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buffer, length + 1)
+                titles.append((hwnd, buffer.value))
+        return True
+
+    user32.EnumWindows(collect, 0)
+    wanted = [h for h, t in titles if name and name.lower() in t.lower()] or              [h for h, t in titles if "claude" in t.lower()]
+    if not wanted:
+        return
+    hwnd = wanted[0]
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.keybd_event(0x12, 0, 0, 0)  # a tap of Alt lets this process change the foreground window
+    user32.keybd_event(0x12, 0, 2, 0)
+    user32.SetForegroundWindow(hwnd)
+
+
+def handle_claude_message(relay: Any, message: dict[str, Any]) -> bool:
+    """Deck -> bridge Claude frames; True when the message was one of them."""
+    message_type = message.get("type")
+    if message_type not in {"claude_reply", "claude_clear", "claude_open"}:
+        return False
+    if relay is None:
+        return True
+    if message_type == "claude_reply":
+        relay.answer(int(message.get("id", 0)), message.get("ok") is True)
+    elif message_type == "claude_clear":
+        relay.clear_done()
+    else:
+        focus_window(str(message.get("name", "")))
+    return True
+
+
 def run(config: dict[str, Any]) -> None:
     baud = int(config.get("baud", 115200))
     interval = max(0.5, float(config.get("interval_seconds", 2.0)))
@@ -1128,6 +1193,7 @@ def run(config: dict[str, Any]) -> None:
     feeds = InfoFeeds(config, log=log)
     feeds.start()
     toasts = start_pc_notifications(config)
+    claude = start_claude_relay(config)
 
     psutil.cpu_percent(interval=None)
     previous = current_counters()
@@ -1172,6 +1238,7 @@ def run(config: dict[str, Any]) -> None:
                 last_send = 0.0
                 sent_info_version = -1
                 sent_feed_versions: dict[str, int] = {}
+                sent_claude_version = -1
                 device_wifi: tuple[str, int] | None = None
                 receive_buffer = bytearray()
 
@@ -1192,6 +1259,12 @@ def run(config: dict[str, Any]) -> None:
                             send_json(serial_port, frame)
                             sent_feed_versions[kind] = version
 
+                    if claude is not None:
+                        claude_version, claude_frame = claude.snapshot()
+                        if claude_version != sent_claude_version:
+                            send_json(serial_port, claude_frame)
+                            sent_claude_version = claude_version
+
                     forward_pc_toasts(toasts, serial_port, device_wifi, config)
 
                     chunk = serial_port.read(256)
@@ -1209,7 +1282,9 @@ def run(config: dict[str, Any]) -> None:
                                 continue
 
                             message_type = message.get("type")
-                            if message_type == "macro":
+                            if handle_claude_message(claude, message):
+                                pass
+                            elif message_type == "macro":
                                 execute_macro(config, int(message.get("id", 0)))
                             elif message_type == "hello":
                                 protocol = message.get("protocol", "?")
@@ -1227,6 +1302,7 @@ def run(config: dict[str, Any]) -> None:
                                 send_wifi_provisioning(serial_port, config)
                                 sent_info_version = -1  # device rebooted: resend INFO
                                 sent_feed_versions.clear()
+                                sent_claude_version = -1
                                 device_wifi = None
                             elif message_type == "wifi_status":
                                 if message.get("connected") and message.get("ip"):

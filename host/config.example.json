@@ -164,6 +164,11 @@
     "udp_port": 4210,
     "token": ""
   },
+  "claude": {
+    "enabled": true,
+    "port": 47821,
+    "ask_wait_seconds": 25
+  },
   "coins": [
     "bitcoin",
     "ethereum",

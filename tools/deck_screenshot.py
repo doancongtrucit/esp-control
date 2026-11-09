@@ -59,6 +59,19 @@ def sample_frames() -> list[dict]:
     ]
 
 
+def claude_frame(ask: bool) -> dict:
+    """Made-up Claude Code sessions; "claude:1" also opens a permission prompt."""
+    frame = {"type": "claude", "n": 5, "s": [
+        ["project-1", "w", "Allow Bash?", 95],
+        ["project-2", "r", "Edit: ui_v2_screens.h", 480],
+        ["project-3", "d", "Task complete", 1500],
+        ["project-4", "d", "Task complete", 4000]]}
+    if ask:
+        frame["ask"] = {"id": 1, "name": "project-1", "tool": "Bash",
+                        "cmd": "pio test -e cyd_2usb --upload-port COM4 --test-port COM4 -f test_claude_status"}
+    return frame
+
+
 class Deck:
     def __init__(self, port: str):
         self.ser = serial.Serial()
@@ -120,6 +133,9 @@ def main() -> None:
     shots = []
     for target in args.targets:
         screen, _, tab = target.partition(":")
+        if screen == "claude" and not args.no_data:
+            deck.send(claude_frame(ask=tab == "1"))
+            time.sleep(0.5)
         image = deck.shot(screen, int(tab) if tab else -1)
         name = screen + (f"-{tab}" if tab else "")
         image.save(args.out / f"{name}.png")

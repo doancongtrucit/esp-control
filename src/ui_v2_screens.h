@@ -1374,6 +1374,257 @@ void aramCheckStale() {
   if (screen == Screen::Aram) uiShow(aramReturnTo);
 }
 
+// ---------- Claude Code (sessions and permission prompts relayed by the bridge) ----------
+
+constexpr int CL_X = 8, CL_W = UI_SCREEN_W - 16;
+constexpr int CL_ROW_Y = 38, CL_ROW_H = 36, CL_ROW_STEP = 39;
+constexpr int CL_BTN_Y = 198, CL_BTN_H = 36, CL_BTN_W = (CL_W - 6) / 2;
+constexpr int CL_BADGE_W = 64;
+// Permission card: project, tool, command, then DENY (tap) and ALLOW (hold) buttons.
+constexpr int CL_CARD_Y = 38, CL_CARD_H = 196;
+constexpr int CL_ASK_BTN_Y = 182, CL_ASK_BTN_H = 44;
+constexpr int CL_ASK_SPLIT = UI_SCREEN_W / 2;  // DENY left of it, ALLOW right
+constexpr uint16_t T_RUN = T_ACCENT_2;      // #7fa9ee
+constexpr uint16_t T_OPEN_BTN = 0x2B7C;     // #2f6fe4
+constexpr uint16_t T_DENY_BG = 0x5124;      // #522420
+constexpr uint16_t T_ALLOW_BG = 0x1347;     // #14683a
+
+Screen claudeReturnTo = Screen::Home;
+bool claudeAutoOpened = false;  // opened by a permission prompt: go back once it is answered
+uint32_t claudeDrawnMinute = 0;
+uint32_t claudeAskSinceMs = 0;
+// The bridge gives up on a prompt after ask_wait_seconds (25 s by default) and says so; if the
+// bridge itself goes away, the card closes after this long instead of staying on screen.
+constexpr uint32_t CLAUDE_ASK_MAX_MS = 90000;
+
+uint32_t claudeRowAge(const ClaudeRow &row) { return row.ageSec + (millis() - claudeRxMs) / 1000UL; }
+
+// Cuts text to `w` pixels in `font`, ending in "..." when something was dropped.
+String claudeFit(const String &text, UiFont font, int w) {
+  if (uiTextWidthIn(font, text) <= w) return text;
+  String out = text;
+  while (out.length() && uiTextWidthIn(font, out + "...") > w) out.remove(out.length() - 1);
+  return out + "...";
+}
+
+void drawClaudeBadge(int x, int y, ClaudeRunState state, uint16_t bg) {
+  const char *label =
+      state == ClaudeRunState::Waiting ? "WAITING" : (state == ClaudeRunState::Running ? "RUNNING" : "DONE");
+  tft.setTextDatum(MC_DATUM);
+  if (state == ClaudeRunState::Done) {
+    tft.drawRoundRect(x, y, CL_BADGE_W, 18, 5, T_TEXT);
+    tft.setTextColor(T_TEXT, bg);
+  } else {
+    const uint16_t fill = state == ClaudeRunState::Waiting ? T_ACCENT : T_RUN;
+    tft.fillRoundRect(x, y, CL_BADGE_W, 18, 5, fill);
+    tft.setTextColor(T_ON_ACCENT, fill);
+  }
+  uiTextIn(UiFont::Tiny, label, x + CL_BADGE_W / 2, y + 9);
+}
+
+void drawClaudeRow(int i) {
+  const ClaudeRow &row = claude.rows[i];
+  const int y = CL_ROW_Y + i * CL_ROW_STEP;
+  const bool waiting = row.state == ClaudeRunState::Waiting;
+  const uint16_t bg = waiting ? T_ALERT_BG : T_CARD;
+  tft.fillRoundRect(CL_X, y, CL_W, CL_ROW_H, 8, bg);
+  if (waiting) {
+    tft.drawRoundRect(CL_X, y, CL_W, CL_ROW_H, 8, T_ACCENT);
+    tft.drawRoundRect(CL_X + 1, y + 1, CL_W - 2, CL_ROW_H - 2, 7, T_ACCENT);
+  }
+  drawClaudeBadge(CL_X + 6, y + (CL_ROW_H - 18) / 2, row.state, bg);
+  const int textX = CL_X + CL_BADGE_W + 12;
+  const int textW = CL_X + CL_W - 34 - textX;
+  drawViText(tft, textX, y + 2, fitViText(row.name, textW, true), T_TEXT, bg, true);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_MUTED, bg);
+  uiTextIn(UiFont::Small, claudeFit(row.detail, UiFont::Small, textW), textX, y + 20);
+  tft.setTextDatum(MR_DATUM);
+  uiTextIn(UiFont::Small, claudeAgeText(claudeRowAge(row)), CL_X + CL_W - 8, y + CL_ROW_H / 2);
+}
+
+void drawClaudeButton(int x, const char *label, Icon icon, uint16_t bg, bool enabled) {
+  tft.fillRoundRect(x, CL_BTN_Y, CL_BTN_W, CL_BTN_H, 8, bg);
+  const uint16_t fg = enabled ? T_TEXT : T_MUTED;
+  const int w = 18 + uiTextWidthIn(UiFont::BodyBold, label);
+  const int left = x + (CL_BTN_W - w) / 2;
+  drawIcon(tft, icon, left, CL_BTN_Y + (CL_BTN_H - 14) / 2, 14, fg, bg);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(fg, bg);
+  uiTextIn(UiFont::BodyBold, label, left + 18, CL_BTN_Y + CL_BTN_H / 2);
+}
+
+int claudeWaitingRow() {
+  for (uint8_t i = 0; i < claude.count; ++i)
+    if (claude.rows[i].state == ClaudeRunState::Waiting) return i;
+  return -1;
+}
+
+bool claudeHasDone() {
+  for (uint8_t i = 0; i < claude.count; ++i)
+    if (claude.rows[i].state == ClaudeRunState::Done) return true;
+  return false;
+}
+
+// Splits text into at most two lines of `w` pixels (the second ends in "..." if cut).
+void claudeTwoLines(const String &text, int w, String &a, String &b) {
+  a = text;
+  b = "";
+  while (a.length() && uiTextWidthIn(UiFont::Body, a) > w) a.remove(a.length() - 1);
+  if (a.length() < text.length()) b = claudeFit(text.substring(a.length()), UiFont::Body, w);
+}
+
+void drawClaudeAskButtons() {
+  const int denyX = CL_X + 8, allowX = CL_ASK_SPLIT + 4, w = CL_ASK_SPLIT - 4 - denyX;
+  tft.fillRoundRect(denyX, CL_ASK_BTN_Y, w, CL_ASK_BTN_H, 8, T_DENY_BG);
+  tft.fillRoundRect(allowX, CL_ASK_BTN_Y, w, CL_ASK_BTN_H, 8, T_ALLOW_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_TEXT, T_DENY_BG);
+  uiTextIn(UiFont::BodyBold, "DENY", denyX + w / 2, CL_ASK_BTN_Y + 15);
+  tft.setTextColor(T_MUTED, T_DENY_BG);
+  uiTextIn(UiFont::Tiny, "tap", denyX + w / 2, CL_ASK_BTN_Y + 32);
+  tft.setTextColor(T_TEXT, T_ALLOW_BG);
+  uiTextIn(UiFont::BodyBold, "ALLOW", allowX + w / 2, CL_ASK_BTN_Y + 15);
+  tft.setTextColor(T_MUTED, T_ALLOW_BG);
+  uiTextIn(UiFont::Tiny, "hold 1 s", allowX + w / 2, CL_ASK_BTN_Y + 32);
+}
+
+void drawClaudeAsk() {
+  tft.fillRoundRect(CL_X, CL_CARD_Y, CL_W, CL_CARD_H, 10, T_ALERT_BG);
+  tft.drawRoundRect(CL_X, CL_CARD_Y, CL_W, CL_CARD_H, 10, T_ACCENT);
+  tft.fillRoundRect(CL_X + 10, CL_CARD_Y + 10, 84, 18, 5, T_ACCENT);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_ON_ACCENT, T_ACCENT);
+  uiTextIn(UiFont::Tiny, "PERMISSION", CL_X + 52, CL_CARD_Y + 19);
+  drawViText(tft, CL_X + 10, CL_CARD_Y + 34, fitViText(claude.askName, CL_W - 20, true), T_TEXT, T_ALERT_BG, true);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_MUTED, T_ALERT_BG);
+  uiTextIn(UiFont::Small, claudeFit(String("wants to use ") + claude.askTool, UiFont::Small, CL_W - 20), CL_X + 10,
+           CL_CARD_Y + 54);
+  // Command (or file / URL) in a dark well, up to two lines.
+  const int wellY = CL_CARD_Y + 74;
+  tft.fillRoundRect(CL_X + 10, wellY, CL_W - 20, 62, 6, T_BG);
+  String a, b;
+  claudeTwoLines(claude.askCmd.length() ? claude.askCmd : claude.askTool, CL_W - 36, a, b);
+  tft.setTextColor(T_TEXT, T_BG);
+  uiTextIn(UiFont::Body, a, CL_X + 18, wellY + 10);
+  uiTextIn(UiFont::Body, b, CL_X + 18, wellY + 32);
+  drawClaudeAskButtons();
+}
+
+void drawClaudeV2() {
+  drawHeaderV2("CLAUDE CODE", true);
+  claudeDrawnMinute = millis() / 60000UL;
+  if (claude.askId) {
+    drawClaudeAsk();
+    return;
+  }
+  if (claude.count == 0) {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(T_MUTED, T_SURFACE);
+    uiText(claudeRxMs ? "No Claude Code sessions" : "Waiting for the bridge", UI_SCREEN_W / 2, 100, 2);
+    uiTextIn(UiFont::Small, "Hook setup: docs/CLAUDE_CODE.md", UI_SCREEN_W / 2, 124);
+  }
+  for (uint8_t i = 0; i < claude.count; ++i) drawClaudeRow(i);
+  if (claude.total > claude.count) {  // more sessions than rows: count them in the header
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(T_MUTED, T_BG);
+    uiTextIn(UiFont::Small, String("+") + (claude.total - claude.count) + " more",
+             50 + uiTextWidthIn(UiFont::BodyBold, "CLAUDE CODE"), UI_HEADER_H / 2);
+  }
+  const bool waiting = claudeWaitingRow() >= 0;
+  drawClaudeButton(CL_X, "OPEN WAITING", Icon::ChevronRight, waiting ? T_OPEN_BTN : T_CARD, waiting);
+  drawClaudeButton(CL_X + CL_BTN_W + 6, "CLEAR DONE", Icon::Clipboard, T_CARD, claudeHasDone());
+}
+
+// ALLOW needs the finger on the button for HOLD_CONFIRM_MS; a bar fills under the label.
+bool claudeHoldAllow() {
+  const int x = CL_ASK_SPLIT + 4, w = CL_ASK_SPLIT - 12 - CL_X;
+  const uint32_t start = millis();
+  int misses = 0;
+  while (millis() - start < HOLD_CONFIRM_MS) {
+    misses = touchHeld() ? 0 : misses + 1;
+    if (misses >= 3) {
+      drawClaudeAskButtons();
+      return false;
+    }
+    tft.fillRect(x + 6, CL_ASK_BTN_Y + CL_ASK_BTN_H - 5, (w - 12) * (millis() - start) / HOLD_CONFIRM_MS, 3, T_TEXT);
+    delay(20);
+  }
+  return true;
+}
+
+void claudeAnswered() {
+  claude.askId = 0;  // the bridge's next frame confirms it
+  if (claudeAutoOpened) {
+    claudeAutoOpened = false;
+    uiShow(claudeReturnTo);
+  } else {
+    fullRedrawRequested = true;
+  }
+}
+
+void claudeCheckStaleAsk() {
+  if (!claude.askId || millis() - claudeAskSinceMs <= CLAUDE_ASK_MAX_MS) return;
+  claude.askId = 0;
+  for (uint8_t i = 0; i < claude.count; ++i)
+    if (claude.rows[i].state == ClaudeRunState::Waiting) claude.rows[i].detail = "Answer on PC";
+  if (screen == Screen::Claude) claudeAnswered();
+}
+
+void touchClaudeV2(uint16_t x, uint16_t y) {
+  if (claude.askId) {
+    if (y < CL_ASK_BTN_Y || y > CL_ASK_BTN_Y + CL_ASK_BTN_H) return;
+    const uint32_t id = claude.askId;
+    if (x < CL_ASK_SPLIT) {
+      sendClaudeReply(id, false);
+      waitForRelease();
+      claudeAnswered();
+    } else if (claudeHoldAllow()) {
+      sendClaudeReply(id, true);
+      ledFlashUntil = millis() + 150;
+      waitForRelease();
+      claudeAnswered();
+    } else {
+      waitForRelease();
+    }
+    lastTouchMs = millis();
+    return;
+  }
+  if (y < CL_BTN_Y) return;
+  if (x < CL_X + CL_BTN_W) {
+    const int row = claudeWaitingRow();
+    if (row >= 0) sendClaudeOpen(claude.rows[row].name);
+  } else if (claudeHasDone()) {
+    sendSimpleFrame("claude_clear");
+  }
+}
+
+// Every "claude" frame. A new permission prompt pops this screen up (like ARAM);
+// once it is answered (here or on the PC) the deck goes back to where it was.
+void uiClaudeFrame(const ClaudeState &next) {
+  const bool newAsk = next.askId != 0 && next.askId != claude.askId;
+  const bool askGone = next.askId == 0 && claude.askId != 0;
+  claude = next;
+  if (newAsk) {
+    claudeAskSinceMs = millis();
+    noteActivity();
+    if (screen != Screen::Claude) {
+      claudeReturnTo = screen == Screen::Standby ? Screen::Home : screen;
+      claudeAutoOpened = true;
+      bannerActive = false;
+      uiShow(Screen::Claude);
+      return;
+    }
+  }
+  if (askGone && claudeAutoOpened && screen == Screen::Claude) {
+    claudeAutoOpened = false;
+    uiShow(claudeReturnTo);
+    return;
+  }
+  if (screen == Screen::Claude) fullRedrawRequested = true;
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -1386,7 +1637,7 @@ void uiRenderFullV2() {
       break;
     case Screen::Controls: drawControlsV2(); break;
     case Screen::Info: drawInfoV2(); break;
-    case Screen::Claude: drawPlaceholderV2("CLAUDE CODE"); break;
+    case Screen::Claude: drawClaudeV2(); break;
     case Screen::AiTools: drawPlaceholderV2("AI TOOLS"); break;
     case Screen::Standby: drawStandbyV2(); break;
     case Screen::Notify: drawNotifyV2(); break;
@@ -1400,6 +1651,7 @@ void uiRenderFullV2() {
 
 void uiRenderDynamicV2() {
   aramCheckStale();
+  claudeCheckStaleAsk();
   if (bannerActive && static_cast<int32_t>(bannerUntil - millis()) <= 0) {
     bannerActive = false;
     fullRedrawRequested = true;  // repaint what the banner covered
@@ -1407,6 +1659,8 @@ void uiRenderDynamicV2() {
   }
   drawHeaderStatusV2();
   if (screen == Screen::Monitor) drawMonitorV2Dynamic();
+  // Row ages tick once a minute.
+  if (screen == Screen::Claude && !claude.askId && millis() / 60000UL != claudeDrawnMinute) fullRedrawRequested = true;
   // A new day: the calendar's "today" moves.
   static int drawnDay = -1;
   int d, m, y;
@@ -1444,6 +1698,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
   }
   if (screen != Screen::Home && y < UI_HEADER_H && x < HOME_BTN_W) {
     if (screen == Screen::Aram) aramDismissed = true;  // stay home until the next game
+    if (screen == Screen::Claude) claudeAutoOpened = false;
     uiShow(Screen::Home);
     return;
   }
@@ -1453,6 +1708,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Notify: touchNotifyV2(x, y); break;
     case Screen::Info: touchInfoV2(x, y); break;
     case Screen::Settings: touchSettingsV2(x, y); break;
+    case Screen::Claude: touchClaudeV2(x, y); break;
     default: break;
   }
 }

@@ -116,6 +116,18 @@ Shows a notification on the `cyd_2usb` build (UI v2): a 2.5 s banner, a blue LED
 
 `src` is `pc` or `phone`.
 
+### `claude` (`cyd_2usb`)
+
+Claude Code sessions reported by the bridge's hook relay (see [CLAUDE_CODE.md](CLAUDE_CODE.md)). Sent whenever something changes; ages are seconds at send time and the device keeps counting.
+
+```json
+{"type": "claude", "n": 5,
+ "s": [["project-1", "w", "Allow Bash?", 12], ["project-2", "r", "Edit: main.cpp", 480]],
+ "ask": {"id": 7, "name": "project-1", "tool": "Bash", "cmd": "npm test"}}
+```
+
+`s` holds up to 4 rows: name (last folder of the session's working directory), state (`w` waiting for you, `r` running, `d` done), detail, age. `n` is the number of sessions known. `ask` is present while a permission prompt waits for an answer from the deck; a new `ask` opens the CLAUDE CODE screen.
+
 ### `wifi` (`cyd_2usb`)
 
 Provisions the device's Wi-Fi and the token for UDP notifications. Sent by the bridge after it opens the port and after every `hello`; the device saves the values in flash and reconnects only when they change.
@@ -182,6 +194,16 @@ Sent when a control button is pressed:
 ```
 
 The ESP32 sends only the numeric ID. The trusted action remains in the local `host/config.json` file.
+
+### `claude_reply`, `claude_clear`, `claude_open` (`cyd_2usb`)
+
+```json
+{"type":"claude_reply","id":7,"ok":true}
+{"type":"claude_clear"}
+{"type":"claude_open","name":"project-1"}
+```
+
+`claude_reply` answers the open `ask` (`ok` true = Allow, anything else = Deny); the device sends Allow only after a 1 s hold. Replies for an ask that is no longer open are ignored. `claude_clear` removes finished sessions; `claude_open` asks the bridge to bring that session's window to the front (best effort, Windows only).
 
 ### `error`
 

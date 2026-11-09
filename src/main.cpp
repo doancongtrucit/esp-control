@@ -14,6 +14,7 @@
 
 #include "ancs.h"
 #include "aram.h"
+#include "claude_status.h"
 #include "color_util.h"
 #include "deck_settings.h"
 #include "format_util.h"
@@ -278,6 +279,10 @@ int8_t macroColorFromName(const char *name) {
 }
 NotifyStore notifyStore;
 uint32_t notifyFlashUntil = 0;
+#ifdef DECK_UI_V2
+ClaudeState claude;          // Claude Code sessions reported by the bridge
+uint32_t claudeRxMs = 0;     // when the last "claude" frame arrived (row ages count from it)
+#endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
 DeckSettings settings;
@@ -293,6 +298,7 @@ void uiConfigChanged();
 void uiGoldChanged();
 void uiInfoFeedChanged(uint8_t tab);
 void uiLinksChanged();
+void uiClaudeFrame(const ClaudeState &next);
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -739,6 +745,21 @@ void sendSimpleFrame(const char *type) {
   sendFrame(doc);
 }
 
+void sendClaudeReply(uint32_t id, bool allow) {
+  JsonDocument doc;
+  doc["type"] = "claude_reply";
+  doc["id"] = id;
+  doc["ok"] = allow;
+  sendFrame(doc);
+}
+
+void sendClaudeOpen(const String &name) {
+  JsonDocument doc;
+  doc["type"] = "claude_open";
+  doc["name"] = name;
+  sendFrame(doc);
+}
+
 void sendMacro(uint8_t id) {
   JsonDocument doc;
   doc["type"] = "macro";
@@ -904,6 +925,11 @@ void updateStatusLed() {
   }
   if (static_cast<int32_t>(notifyFlashUntil - millis()) > 0) {
     setLed(0, 0, LED_LEVEL * 6);
+    return;
+  }
+  if (claude.anyWaiting()) {  // a Claude Code session needs you: blink orange
+    if ((millis() / 500) % 2) setLed(LED_LEVEL * 6, LED_LEVEL * 2, 0);
+    else setLed(LED_LEVEL, LED_LEVEL / 3, 0);
     return;
   }
 #endif
@@ -1229,6 +1255,13 @@ void handleWeather(JsonDocument &doc) {
   uiInfoFeedChanged(3);
 }
 
+void handleClaude(JsonDocument &doc) {
+  ClaudeState next;
+  if (!parseClaudeFrame(doc.as<JsonVariantConst>(), next)) return;
+  claudeRxMs = millis();
+  uiClaudeFrame(next);
+}
+
 void handleNotify(JsonDocument &doc) {
   const char *src = doc["src"] | "pc";
   addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
@@ -1348,6 +1381,8 @@ void processSerialLine(const String &line) {
     handleWeather(doc);
   } else if (strcmp(type, "notify") == 0) {
     handleNotify(doc);
+  } else if (strcmp(type, "claude") == 0) {
+    handleClaude(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {

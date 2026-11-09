@@ -167,6 +167,39 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn("icon", macros[1])
 
 
+class FakeRelay:
+    def __init__(self):
+        self.calls = []
+
+    def answer(self, ask_id, allow):
+        self.calls.append(("answer", ask_id, allow))
+
+    def clear_done(self):
+        self.calls.append(("clear",))
+
+
+class ClaudeMessageTests(unittest.TestCase):
+    def test_reply_is_passed_to_the_relay(self):
+        relay = FakeRelay()
+        self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 4, "ok": True}))
+        self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 5, "ok": False}))
+        self.assertEqual([("answer", 4, True), ("answer", 5, False)], relay.calls)
+
+    def test_clear_done(self):
+        relay = FakeRelay()
+        self.assertTrue(bridge.handle_claude_message(relay, {"type": "claude_clear"}))
+        self.assertEqual([("clear",)], relay.calls)
+
+    def test_reply_without_ok_is_never_an_allow(self):
+        relay = FakeRelay()
+        bridge.handle_claude_message(relay, {"type": "claude_reply", "id": 4})
+        self.assertEqual([("answer", 4, False)], relay.calls)
+
+    def test_other_messages_and_no_relay_are_not_handled(self):
+        self.assertFalse(bridge.handle_claude_message(FakeRelay(), {"type": "macro", "id": 1}))
+        self.assertTrue(bridge.handle_claude_message(None, {"type": "claude_clear"}))
+
+
 class StatsDateTests(unittest.TestCase):
     def test_stats_include_local_date(self):
         from datetime import date
