@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -1243,6 +1243,137 @@ void uiUpdateStandby() {
   uiShow(Screen::Standby);
 }
 
+// ---------- ARAM (game helper pushed by ARAM Helper on the PC) ----------
+
+AramData aram;
+uint32_t aramLastMs = 0;
+bool aramDismissed = false;  // Home pressed during this game: do not pop up again until the next one
+Screen aramReturnTo = Screen::Home;
+
+constexpr int ARAM_X = 8, ARAM_W = UI_SCREEN_W - 16;
+constexpr int ARAM_CHAMP_Y = 36;
+constexpr int ARAM_TOP_LABEL_Y = 58, ARAM_ROW_Y = 70, ARAM_ROW_STEP = 24, ARAM_ROW_H = 22;
+constexpr int ARAM_COMBO_LABEL_Y = 146, ARAM_COMBO_Y = 158;
+constexpr int ARAM_ENEMY_LABEL_Y = 182, ARAM_ENEMY_Y = 194, ARAM_ENEMY_STEP = 21;
+constexpr uint16_t T_BEST_BG = 0x11C5;  // #123a2a
+
+uint16_t aramTierColor(const String &tier) {
+  if (tier.startsWith("S")) return T_ACCENT;
+  if (tier == "A") return T_GOLD;
+  if (tier == "B") return T_ACCENT_2;
+  return T_MUTED;
+}
+
+void drawAramLabel(int y, const char *label) {
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_MUTED, T_BG);
+  const int w = uiTextIn(UiFont::Tiny, label, ARAM_X + 2, y);
+  tft.drawFastHLine(ARAM_X + 8 + w, y + 5, ARAM_X + ARAM_W - (ARAM_X + 8 + w), T_DIVIDER);
+}
+
+void drawAramPick(int i) {
+  const AramPick &p = aram.picks[i];
+  const int y = ARAM_ROW_Y + i * ARAM_ROW_STEP;
+  const uint16_t bg = p.best ? T_BEST_BG : T_CARD;
+  tft.fillRoundRect(ARAM_X, y, ARAM_W, ARAM_ROW_H, 6, bg);
+  if (p.best) {
+    tft.fillCircle(ARAM_X + 11, y + ARAM_ROW_H / 2, 4, T_UP);
+  } else {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(T_MUTED, bg);
+    uiText(String(i + 1), ARAM_X + 11, y + ARAM_ROW_H / 2, 2);
+  }
+  drawViText(tft, ARAM_X + 22, y + 3, fitViText(p.name, 176, p.best), p.best ? T_UP : T_TEXT, bg, p.best);
+  // Win rate at the right edge, the combo note ("+3 A") just left of it
+  const int wrRight = ARAM_X + ARAM_W - 6;
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(p.best ? T_UP : T_TEXT, bg);
+  uiText(p.winrate, wrRight, y + ARAM_ROW_H / 2, 2);
+  tft.setTextColor(T_GOLD, bg);
+  uiText(p.note, wrRight - uiTextWidth(p.winrate, 2) - 8, y + ARAM_ROW_H / 2, 1);
+}
+
+void drawAramV2() {
+  drawHeaderV2("ARAM", true);
+  // Champion, tier, champion win rate
+  drawViText(tft, ARAM_X + 2, ARAM_CHAMP_Y, fitViText(aram.champion, 200, true), T_TEXT, T_BG, true);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(aramTierColor(aram.tier), T_BG);
+  uiTextIn(UiFont::BodyBold, aram.tier, ARAM_X + 10 + viTextWidth(fitViText(aram.champion, 200, true), true),
+           ARAM_CHAMP_Y + 9);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(T_MUTED, T_BG);
+  uiText(aram.winrate, ARAM_X + ARAM_W - 2, ARAM_CHAMP_Y + 9, 2);
+
+  if (aram.pickCount) {  // augment choice on screen: ranked offer
+    drawAramLabel(ARAM_TOP_LABEL_Y, "PICK");
+    for (uint8_t i = 0; i < aram.pickCount; ++i) drawAramPick(i);
+  } else {               // between choices: core build and augments already taken
+    drawAramLabel(ARAM_TOP_LABEL_Y, "BUILD");
+    drawViText(tft, ARAM_X + 2, ARAM_ROW_Y, fitViText(aram.build.length() ? aram.build : String("-"), ARAM_W - 4, true),
+               T_UP, T_BG, true);
+    drawAramLabel(ARAM_ROW_Y + 26, "TAKEN");
+    drawViText(tft, ARAM_X + 2, ARAM_ROW_Y + 38, fitViText(aram.owned.length() ? aram.owned : String("-"), ARAM_W - 4),
+               T_TEXT, T_BG);
+  }
+
+  if (aram.combo.length()) {
+    drawAramLabel(ARAM_COMBO_LABEL_Y, "COMBO");
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(aramTierColor(aram.comboTier), T_BG);
+    uiTextIn(UiFont::BodyBold, aram.comboTier, ARAM_X + 2, ARAM_COMBO_Y + 9);
+    drawViText(tft, ARAM_X + 22, ARAM_COMBO_Y, fitViText(aram.combo, ARAM_W - 70), T_TEXT, T_BG);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(T_LINK, T_BG);
+    uiText(aram.comboHave, ARAM_X + ARAM_W - 2, ARAM_COMBO_Y + 9, 1);
+  }
+
+  if (aram.counterCount) {
+    drawAramLabel(ARAM_ENEMY_LABEL_Y, "VS ENEMY TEAM");
+    for (uint8_t i = 0; i < aram.counterCount; ++i) {
+      const AramLine &line = aram.counters[i];
+      const int y = ARAM_ENEMY_Y + i * ARAM_ENEMY_STEP;
+      int x = ARAM_X + 2;
+      if (line.title.length()) {
+        const String title = fitViText(line.title, 150, true);
+        drawViText(tft, x, y, title, T_ACCENT, T_BG, true);
+        x += viTextWidth(title, true) + 8;
+      }
+      drawViText(tft, x, y, fitViText(line.detail, ARAM_X + ARAM_W - x), T_MUTED, T_BG);
+    }
+  }
+}
+
+// Called from netLoop for every valid {"type":"aram"} datagram.
+void uiAramPacket(const AramData &next) {
+  const bool newGame = next.inGame && !aram.inGame;
+  const bool changed = next.seq != aram.seq || next.inGame != aram.inGame;
+  aram = next;
+  aramLastMs = millis();
+  if (!next.inGame) {  // game over: back to where the user was
+    aramDismissed = false;
+    if (screen == Screen::Aram) uiShow(aramReturnTo);
+    return;
+  }
+  if (newGame) aramDismissed = false;
+  noteActivity();  // keep the screen awake while a game runs
+  if (screen == Screen::Aram) {
+    if (changed) fullRedrawRequested = true;
+  } else if (!aramDismissed) {
+    aramReturnTo = screen == Screen::Standby ? Screen::Home : screen;
+    bannerActive = false;
+    uiShow(Screen::Aram);
+  }
+}
+
+// No packet for ARAM_STALE_MS: the PC app stopped or the game ended without a final packet.
+void aramCheckStale() {
+  if (!aram.inGame || millis() - aramLastMs <= ARAM_STALE_MS) return;
+  aram.inGame = false;
+  aramDismissed = false;
+  if (screen == Screen::Aram) uiShow(aramReturnTo);
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -1260,6 +1391,7 @@ void uiRenderFullV2() {
     case Screen::Standby: drawStandbyV2(); break;
     case Screen::Notify: drawNotifyV2(); break;
     case Screen::Settings: drawSettingsV2(); break;
+    case Screen::Aram: drawAramV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -1267,6 +1399,7 @@ void uiRenderFullV2() {
 }
 
 void uiRenderDynamicV2() {
+  aramCheckStale();
   if (bannerActive && static_cast<int32_t>(bannerUntil - millis()) <= 0) {
     bannerActive = false;
     fullRedrawRequested = true;  // repaint what the banner covered
@@ -1310,6 +1443,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     return;
   }
   if (screen != Screen::Home && y < UI_HEADER_H && x < HOME_BTN_W) {
+    if (screen == Screen::Aram) aramDismissed = true;  // stay home until the next game
     uiShow(Screen::Home);
     return;
   }
@@ -1330,7 +1464,8 @@ void uiOpenForShot(const char *name, int tab) {
     Screen target;
   } SCREENS[] = {{"home", Screen::Home},       {"monitor", Screen::Monitor}, {"controls", Screen::Controls},
                  {"info", Screen::Info},       {"claude", Screen::Claude},   {"aitools", Screen::AiTools},
-                 {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings}};
+                 {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings},
+                 {"aram", Screen::Aram}};
   for (const auto &entry : SCREENS) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }

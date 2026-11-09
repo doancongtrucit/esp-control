@@ -19,12 +19,15 @@ bool parseUdpNotify(const char *payload, const String &token, String &app, Strin
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
+#include "aram.h"
+
 namespace {
 constexpr uint32_t RETRY_MS = 30000;
 constexpr char PREFS_NAMESPACE[] = "deckwifi";
 
 WifiSettings settings;
 NetHandler handler = nullptr;
+AramHandler aramHandler = nullptr;
 WiFiUDP udp;
 bool udpOpen = false;
 bool attempted = false;
@@ -59,8 +62,9 @@ void connect() {
 }
 }  // namespace
 
-void netBegin(NetHandler onNotify) {
+void netBegin(NetHandler onNotify, AramHandler onAram) {
   handler = onNotify;
+  aramHandler = onAram;
   load();
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);  // required while BLE is running
@@ -105,6 +109,14 @@ void netLoop() {
   char buffer[UDP_NOTIFY_MAX + 1];
   const int n = udp.read(buffer, UDP_NOTIFY_MAX);
   buffer[max(n, 0)] = '\0';
+  // ARAM packets first: the notification parser accepts any JSON with the right token.
+  if (aramHandler) {
+    AramData aram;
+    if (parseUdpAram(buffer, settings.token, aram)) {
+      aramHandler(aram);
+      return;
+    }
+  }
   String app, from, body;
   if (!parseUdpNotify(buffer, settings.token, app, from, body)) {
     ++rejected;

@@ -765,6 +765,25 @@ def send_udp_notify(host: str, port: int, token: str, app: str, sender: str, bod
         sock.close()
 
 
+DEVICE_STATE_FILE: Path | None = None  # set in main(): device_state.json next to config.json (git-ignored)
+
+
+def device_state(device_wifi: tuple[str, int] | None) -> dict[str, Any]:
+    """Where other local apps (e.g. ARAM Helper) can reach the device over Wi-Fi UDP."""
+    if device_wifi is None:
+        return {"connected": False, "updated": int(time.time())}
+    return {"connected": True, "ip": device_wifi[0], "port": device_wifi[1], "updated": int(time.time())}
+
+
+def write_device_state(device_wifi: tuple[str, int] | None) -> None:
+    if DEVICE_STATE_FILE is None:
+        return
+    try:
+        DEVICE_STATE_FILE.write_text(json.dumps(device_state(device_wifi)) + "\n", encoding="utf-8")
+    except OSError as exc:
+        log(f"Could not write {DEVICE_STATE_FILE.name}: {type(exc).__name__}")
+
+
 def send_wifi_provisioning(serial_port: serial.Serial, config: dict[str, Any]) -> None:
     packet = wifi_packet(config)
     if packet is not None:
@@ -1216,6 +1235,7 @@ def run(config: dict[str, Any]) -> None:
                                 else:
                                     device_wifi = None
                                     log("Device Wi-Fi not connected; PC notifications go over USB")
+                                write_device_state(device_wifi)
                             elif message_type == "error":
                                 log(
                                     f"ESP protocol error: {message.get('code', 'unknown')} "
@@ -1280,10 +1300,11 @@ def main() -> None:
     if notify_settings(config).get("enabled", True):
         ensure_notify_token(config, config_path)
 
-    global LOG_FILE
+    global LOG_FILE, DEVICE_STATE_FILE
     log_name = str(config.get("log_file", "control-deck.log") or "").strip()
     if log_name:
         LOG_FILE = (config_path.parent / log_name).resolve()
+    DEVICE_STATE_FILE = config_path.parent / "device_state.json"
 
     if args.list_temperatures:
         raise SystemExit(build_lhm_reader(config).print_temperature_sensors())

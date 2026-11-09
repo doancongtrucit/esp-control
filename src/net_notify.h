@@ -20,8 +20,12 @@ constexpr size_t UDP_NOTIFY_MAX = 1024;
 bool parseUdpNotify(const char *payload, const String &token, String &app, String &from, String &body);
 
 using NetHandler = void (*)(const String &app, const String &from, const String &body);
+struct AramData;
+using AramHandler = void (*)(const AramData &data);
 
-void netBegin(NetHandler handler);  // loads saved settings
+// onAram receives {"type":"aram"} packets (ARAM Helper on the PC); every other
+// valid datagram is a notification.
+void netBegin(NetHandler handler, AramHandler onAram = nullptr);  // loads saved settings
 void netConfigure(const WifiSettings &settings);  // saves and reconnects when changed
 void netLoop();  // never blocks; retries every 30 s while down
 bool netConnected();

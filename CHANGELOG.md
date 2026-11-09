@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
 - Touch filter and RGB status LED on `cyd_2usb`.
 - UI v3 on `cyd_2usb`: dark launcher with gradient app icons and status bar, gradient Controls icons with per-macro colors.
 - Info screen with Gold, Coin (CoinGecko), Stock (VPS), Weather (Open-Meteo) and Calendar tabs; Vietnamese lunar calendar on the device.
+- ARAM screen on `cyd_2usb`: ARAM Helper on the PC sends `{"type":"aram"}` UDP packets (same port and token as notifications); the deck opens the screen during a game (champion, ranked augment offer, best combo, two items against the enemy team, or core build and taken augments between picks) and returns to the previous screen when the game ends or after 15 s without packets. The bridge writes `host/device_state.json` (device IP, git-ignored) so other local apps can reach the device.
 
 ## [0.4.0] - 2026-10-01
 

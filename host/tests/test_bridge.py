@@ -441,5 +441,28 @@ class PlatformConfigurationTests(unittest.TestCase):
         self.assertEqual(expected, actual)
 
 
+class DeviceStateTests(unittest.TestCase):
+    """device_state.json lets other local apps (ARAM Helper) reach the device over Wi-Fi."""
+
+    def test_connected_state(self):
+        state = bridge.device_state(("10.0.0.5", 4210))
+        self.assertTrue(state["connected"])
+        self.assertEqual(("10.0.0.5", 4210), (state["ip"], state["port"]))
+
+    def test_disconnected_state_has_no_ip(self):
+        state = bridge.device_state(None)
+        self.assertFalse(state["connected"])
+        self.assertNotIn("ip", state)
+
+    def test_write_device_state(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "device_state.json"
+            with patch.object(bridge, "DEVICE_STATE_FILE", path):
+                bridge.write_device_state(("10.0.0.5", 4210))
+            self.assertEqual("10.0.0.5", json.loads(path.read_text(encoding="utf-8"))["ip"])
+
+
 if __name__ == "__main__":
     unittest.main()

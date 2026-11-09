@@ -13,6 +13,7 @@
 #include <base64.h>
 
 #include "ancs.h"
+#include "aram.h"
 #include "color_util.h"
 #include "deck_settings.h"
 #include "format_util.h"
@@ -1450,7 +1451,7 @@ void setup() {
   sendFrame(hello);
 #ifdef DECK_UI_V2
   ancsBegin("ESP32 Deck", onPhoneNotification);
-  netBegin(onPcNotification);
+  netBegin(onPcNotification, uiAramPacket);
 #endif
 }
 
