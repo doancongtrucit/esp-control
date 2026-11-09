@@ -11,4 +11,6 @@ void ancsBegin(const char *deviceName, AncsHandler handler);
 void ancsLoop();       // call from loop(): discovery, attribute requests, parsing
 bool ancsConnected();  // iPhone connected and encrypted
 bool ancsReady();
+// Signal strength of the connected iPhone in dBm; false when not connected.
+bool ancsRssi(int &rssi);
 void ancsForgetPairing();  // deletes every bond; the phone must pair again      // subscribed to ANCS, notifications flow

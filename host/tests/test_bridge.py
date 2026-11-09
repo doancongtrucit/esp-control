@@ -501,3 +501,8 @@ class DeviceStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActivityStartTests(unittest.TestCase):
+    def test_activity_can_be_turned_off(self):
+        self.assertIsNone(bridge.start_activity({"activity": {"enabled": False}}))

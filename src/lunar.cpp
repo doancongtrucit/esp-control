@@ -1,6 +1,7 @@
 #include "lunar.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 
 namespace {
@@ -117,3 +118,81 @@ const char *canChiYear(int lunarYear) {
 }
 
 int dayOfWeek(int day, int month, int year) { return static_cast<int>(julianDay(day, month, year) % 7); }
+
+namespace {
+struct DatedHoliday {
+  uint8_t day, month;
+  VnHoliday name;
+};
+
+const DatedHoliday SOLAR_HOLIDAYS[] = {
+    {1, 1, {"Tết Dương lịch", "Tet Duong lich"}},
+    {14, 2, {"Valentine", "Valentine"}},
+    {8, 3, {"Quốc tế Phụ nữ", "Quoc te Phu nu"}},
+    {30, 4, {"Giải phóng miền Nam", "Giai phong mien Nam"}},
+    {1, 5, {"Quốc tế Lao động", "Quoc te Lao dong"}},
+    {1, 6, {"Quốc tế Thiếu nhi", "Quoc te Thieu nhi"}},
+    {2, 9, {"Quốc khánh", "Quoc khanh"}},
+    {20, 10, {"Phụ nữ Việt Nam", "Phu nu Viet Nam"}},
+    {20, 11, {"Nhà giáo Việt Nam", "Nha giao Viet Nam"}},
+    {25, 12, {"Giáng sinh", "Giang sinh"}},
+};
+
+const DatedHoliday LUNAR_HOLIDAYS[] = {
+    {1, 1, {"Tết Nguyên Đán", "Tet Nguyen Dan"}},
+    {2, 1, {"Mùng 2 Tết", "Mung 2 Tet"}},
+    {3, 1, {"Mùng 3 Tết", "Mung 3 Tet"}},
+    {15, 1, {"Rằm tháng Giêng", "Ram thang Gieng"}},
+    {10, 3, {"Giỗ Tổ Hùng Vương", "Gio To Hung Vuong"}},
+    {15, 4, {"Lễ Phật Đản", "Le Phat Dan"}},
+    {5, 5, {"Tết Đoan Ngọ", "Tet Doan Ngo"}},
+    {15, 7, {"Lễ Vu Lan", "Le Vu Lan"}},
+    {15, 8, {"Tết Trung Thu", "Trung Thu"}},
+    {23, 12, {"Ông Công Ông Táo", "Ong Cong Ong Tao"}},
+};
+
+const VnHoliday NEW_YEARS_EVE = {"Giao thừa", "Giao thua"};
+
+int monthLength(int month, int year) {
+  static const int DAYS[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leapYear = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  return month == 2 && leapYear ? 29 : DAYS[month - 1];
+}
+
+void nextDay(int &day, int &month, int &year) {
+  if (++day <= monthLength(month, year)) return;
+  day = 1;
+  if (++month <= 12) return;
+  month = 1;
+  ++year;
+}
+}  // namespace
+
+const VnHoliday *vnHoliday(int day, int month, int year) {
+  const LunarDate l = solarToLunar(day, month, year);
+  if (!l.leap) {
+    for (const auto &h : LUNAR_HOLIDAYS)
+      if (h.day == l.day && h.month == l.month) return &h.name;
+    if (l.month == 12) {  // the last day of the lunar year
+      int d = day, m = month, y = year;
+      nextDay(d, m, y);
+      const LunarDate tomorrow = solarToLunar(d, m, y);
+      if (tomorrow.day == 1 && tomorrow.month == 1) return &NEW_YEARS_EVE;
+    }
+  }
+  for (const auto &h : SOLAR_HOLIDAYS)
+    if (h.day == day && h.month == month) return &h.name;
+  return nullptr;
+}
+
+int daysToHoliday(int day, int month, int year, const VnHoliday **next, int maxDays) {
+  for (int i = 0; i <= maxDays; ++i) {
+    const VnHoliday *h = vnHoliday(day, month, year);
+    if (h) {
+      if (next) *next = h;
+      return i;
+    }
+    nextDay(day, month, year);
+  }
+  return -1;
+}

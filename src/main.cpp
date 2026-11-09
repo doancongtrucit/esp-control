@@ -14,6 +14,7 @@
 
 #include "ancs.h"
 #include "aram.h"
+#include "activity_info.h"
 #include "claude_status.h"
 #include "color_util.h"
 #include "deck_settings.h"
@@ -285,6 +286,7 @@ uint32_t claudeRxMs = 0;     // when the last "claude" frame arrived (row ages c
 ClaudeUsage claudeUsage;     // tokens and estimated cost today ("cusage")
 uint32_t claudeUsageRxMs = 0;
 ClaudeStats claudeStats;     // daily ask / answer / done counts ("cstats")
+ActivityInfo activity;       // time at the PC, reminders, auto-lock ("activity")
 #endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
@@ -303,6 +305,7 @@ void uiInfoFeedChanged(uint8_t tab);
 void uiLinksChanged();
 void uiClaudeFrame(const ClaudeState &next);
 void uiClaudeInfoChanged();
+void uiActivityFrame(const ActivityInfo &previous);
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -765,6 +768,21 @@ void sendClaudeOpen(const String &name) {
   sendFrame(doc);
 }
 
+void sendLockSet(bool on) {
+  JsonDocument doc;
+  doc["type"] = "lock_set";
+  doc["on"] = on;
+  sendFrame(doc);
+}
+
+// act: "snooze" (remind again in 10 minutes) or "ok" (not until the next break).
+void sendBreakReply(const char *act) {
+  JsonDocument doc;
+  doc["type"] = "break_reply";
+  doc["act"] = act;
+  sendFrame(doc);
+}
+
 void sendMacro(uint8_t id) {
   JsonDocument doc;
   doc["type"] = "macro";
@@ -935,6 +953,12 @@ void updateStatusLed() {
   if (claude.anyWaiting()) {  // a Claude Code session needs you: blink orange
     if ((millis() / 500) % 2) setLed(LED_LEVEL * 6, LED_LEVEL * 2, 0);
     else setLed(LED_LEVEL, LED_LEVEL / 3, 0);
+    return;
+  }
+  if (activity.standDue) {  // time to stand up: slow cyan breathing
+    const uint32_t phase = millis() % 2000;
+    const uint8_t level = LED_LEVEL + (LED_LEVEL * 3) * (phase < 1000 ? phase : 2000 - phase) / 1000;
+    setLed(0, level, level);
     return;
   }
 #endif
@@ -1277,6 +1301,11 @@ void handleClaudeStats(JsonDocument &doc) {
   if (parseClaudeStats(doc.as<JsonVariantConst>(), claudeStats)) uiClaudeInfoChanged();
 }
 
+void handleActivity(JsonDocument &doc) {
+  const ActivityInfo previous = activity;
+  if (parseActivityFrame(doc.as<JsonVariantConst>(), activity)) uiActivityFrame(previous);
+}
+
 void handleNotify(JsonDocument &doc) {
   const char *src = doc["src"] | "pc";
   addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
@@ -1296,6 +1325,21 @@ void updatePhoneLink() {
   doc["type"] = "ancs";
   doc["ready"] = phoneLinkUp;
   doc["heap"] = ESP.getFreeHeap();
+  sendFrame(doc);
+}
+
+// Every 2 s: is the paired iPhone connected, and how strong is it (bridge locks the PC when it leaves).
+void sendPhonePresence() {
+  static uint32_t lastMs = 0;
+  if (millis() - lastMs < 2000) return;
+  lastMs = millis();
+  JsonDocument doc;
+  doc["type"] = "phone";
+  const bool link = ancsConnected();
+  doc["link"] = link;
+  int rssi = 0;
+  if (link && ancsRssi(rssi)) doc["rssi"] = rssi;
+  else doc["rssi"] = nullptr;
   sendFrame(doc);
 }
 
@@ -1402,6 +1446,8 @@ void processSerialLine(const String &line) {
     handleClaudeUsage(doc);
   } else if (strcmp(type, "cstats") == 0) {
     handleClaudeStats(doc);
+  } else if (strcmp(type, "activity") == 0) {
+    handleActivity(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {
@@ -1516,6 +1562,7 @@ void loop() {
 #ifdef DECK_UI_V2
   ancsLoop();
   updatePhoneLink();
+  sendPhonePresence();
   netLoop();
   updatePcLink();
   updateScreenSleep();

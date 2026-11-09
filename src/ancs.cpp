@@ -193,6 +193,17 @@ void ancsLoop() {
 
 bool ancsConnected() { return connected && encrypted; }
 bool ancsReady() { return ready; }
+
+bool ancsRssi(int &rssi) {
+  if (!connected) return false;
+  NimBLEServer *server = NimBLEDevice::getServer();
+  if (!server) return false;
+  NimBLEConnInfo info = server->getPeerInfoByHandle(connHandle);
+  NimBLEClient *client = server->getClient(info);
+  if (!client) return false;
+  rssi = client->getRssi();
+  return rssi < 0;  // 0 means the controller could not read it
+}
 void ancsForgetPairing() { NimBLEDevice::deleteAllBonds(); }
 
 #endif  // DECK_UI_V2

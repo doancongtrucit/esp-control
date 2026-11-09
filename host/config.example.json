@@ -170,6 +170,15 @@
     "ask_wait_seconds": 25,
     "usage": true
   },
+  "activity": {
+    "enabled": true,
+    "stand_minutes": 50,
+    "eye_minutes": 20,
+    "break_minutes": 5,
+    "snooze_minutes": 10,
+    "late_hour": 23,
+    "lock": {"enabled": true, "rssi_away": -85, "away_seconds": 30, "idle_seconds": 60}
+  },
   "coins": [
     "bitcoin",
     "ethereum",

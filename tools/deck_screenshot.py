@@ -54,7 +54,7 @@ def sample_frames() -> list[dict]:
         {"type": "info", "g": {"time": stamp, "items": [
             {"n": "SJC 1L", "b": 12150, "s": 12350, "c": 50}, {"n": "Nhan 9999", "b": 11620, "s": 11920, "c": -30}],
             "xau": 2381.4, "xauc": -6.2}},
-        coin, stock, weather,
+        coin, stock, weather, ACTIVITY,
         bridge.notify_packet("Zalo", "Nhóm Dự án", "Chiều nay họp lúc 3 giờ, nhớ mang tài liệu nhé!", source="phone"),
     ]
 
@@ -78,6 +78,10 @@ CLAUDE_USAGE = {"type": "cusage", "t": "22:09",
                 "top": [["project-1", 101.67], ["project-2", 33.02], ["project-3", 2.86]],
                 "blk": {"usd": 35.78, "pct": 59, "left": 13845, "start": "21:00"},
                 "h": [0, 0, 0, 0, 0, 0, 0, 0, 0, 79, 67, 129, 74, 99, 112, 85, 78, 57, 31, 0, 0, 157, 46, 0]}
+ACTIVITY = {"type": "activity", "on": 312, "sess": 52, "brk": 6, "long": 95,
+            "h": [0] * 8 + [35, 58, 60, 44, 10, 38, 60, 57, 0, 0, 0, 0, 0, 0, 0, 0],
+            "wk": [410, 380, 35, 0, 455, 390, 312], "late": False, "rem": None, "eye": 0,
+            "lk": {"on": True, "near": True, "rssi": -58}}
 CLAUDE_STATS = {"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
 
 

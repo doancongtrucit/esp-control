@@ -28,6 +28,24 @@ void test_can_chi_and_weekday() {
   TEST_ASSERT_EQUAL(6, dayOfWeek(1, 11, 2026));  // Sunday
 }
 
+void test_holidays() {
+  TEST_ASSERT_EQUAL_STRING("Tet Nguyen Dan", vnHoliday(17, 2, 2026)->ascii);
+  TEST_ASSERT_EQUAL_STRING("Giao thua", vnHoliday(16, 2, 2026)->ascii);
+  TEST_ASSERT_EQUAL_STRING("Quoc khanh", vnHoliday(2, 9, 2026)->ascii);
+  TEST_ASSERT_EQUAL_STRING("Trung Thu", vnHoliday(25, 9, 2026)->ascii);
+  TEST_ASSERT_EQUAL_STRING("T\xe1\xba\xbf" "t Trung Thu", vnHoliday(25, 9, 2026)->vi);
+  TEST_ASSERT_NULL(vnHoliday(10, 11, 2026));
+}
+
+void test_days_to_next_holiday() {
+  const VnHoliday *next = nullptr;
+  TEST_ASSERT_EQUAL(10, daysToHoliday(10, 11, 2026, &next));
+  TEST_ASSERT_EQUAL_STRING("Nha giao Viet Nam", next->ascii);
+  TEST_ASSERT_EQUAL(0, daysToHoliday(2, 9, 2026, &next));
+  TEST_ASSERT_EQUAL(1, daysToHoliday(31, 12, 2026, &next));  // across the year end
+  TEST_ASSERT_EQUAL_STRING("Tet Duong lich", next->ascii);
+}
+
 void setup() {
   delay(2000);
   UNITY_BEGIN();
@@ -39,6 +57,8 @@ void setup() {
   RUN_TEST(test_regular_sixth_month_2025);
   RUN_TEST(test_before_tet_is_previous_lunar_year);
   RUN_TEST(test_can_chi_and_weekday);
+  RUN_TEST(test_holidays);
+  RUN_TEST(test_days_to_next_holiday);
   UNITY_END();
 }
 

@@ -143,6 +143,20 @@ Usage and Stats tabs of the CLAUDE CODE screen. `cusage` comes from the Claude C
 
 `usd` values are estimates at API rates. `blk` is the open 5-hour window (null when none); `pct` compares it with the biggest window in the last 30 days, `left` is seconds until it closes. `h` counts Claude replies per hour today. In `cstats`: asks, Allow / Always / Deny on the deck, prompts answered on the PC (or timed out), finished tasks.
 
+### `activity` (`cyd_2usb`)
+
+Health tab, break reminders and the auto-lock state, from `host/activity.py` (sent when something changes, about once a minute):
+
+```json
+{"type": "activity", "on": 312, "sess": 52, "brk": 6, "long": 95,
+ "h": [0, 0, 0, 0, 0, 0, 0, 0, 35, 58, 60, 44],
+ "wk": [410, 380, 35, 0, 455, 390, 312],
+ "late": false, "rem": "stand", "eye": 3,
+ "lk": {"on": true, "near": true, "rssi": -58}}
+```
+
+Minutes at the PC today, in the current sitting session (0 on a break), breaks (5+ idle minutes), the longest session; `h` per hour today, `wk` per day from 6 days ago to today. `rem` is `"stand"` while the stand-up reminder waits (else null); `eye` grows by one at each eye-rest reminder. `lk`: auto-lock on/off, whether the iPhone is near (null when the deck stopped reporting) and its smoothed RSSI in dBm.
+
 ### `wifi` (`cyd_2usb`)
 
 Provisions the device's Wi-Fi and the token for UDP notifications. Sent by the bridge after it opens the port and after every `hello`; the device saves the values in flash and reconnects only when they change.
@@ -199,6 +213,24 @@ Sent when the iPhone link comes up or goes down, with free heap for diagnostics:
 ```json
 {"type": "ancs", "ready": true, "heap": 152500}
 ```
+
+### `phone` (`cyd_2usb`)
+
+Every 2 s: whether the paired iPhone is connected over BLE and its signal strength (null when not connected or unreadable). The bridge locks Windows when the phone stays away while the PC is idle.
+
+```json
+{"type": "phone", "link": true, "rssi": -61}
+```
+
+### `lock_set`, `break_reply` (`cyd_2usb`)
+
+```json
+{"type": "lock_set", "on": false}
+{"type": "break_reply", "act": "snooze"}
+{"type": "break_reply", "act": "ok"}
+```
+
+`lock_set` turns auto-lock on or off (kept by the bridge). `break_reply` answers the stand-up reminder: `snooze` reminds again in 10 minutes, `ok` not until the next break.
 
 ### `macro`
 

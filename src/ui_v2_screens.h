@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -69,7 +69,9 @@ void drawHeaderV2(const char *title, bool homeButton) {
 // USB link dot and PC clock, refreshed every second.
 void drawHeaderStatusV2() {
   // The banner covers the header; the Notifications header uses this area for HIDE.
-  if (bannerActive || screen == Screen::Notify || screen == Screen::Home || screen == Screen::Standby) return;
+  if (bannerActive || screen == Screen::Notify || screen == Screen::Home || screen == Screen::Standby ||
+      screen == Screen::Break)
+    return;
   const bool stale = stats.everUpdated && millis() - stats.lastUpdateMs > STALE_AFTER_MS;
   const uint16_t dot = !stats.everUpdated ? T_DIVIDER : (stale ? T_DOWN : T_UP);
   tft.fillRect(STATUS_X, 0, UI_SCREEN_W - STATUS_X, UI_HEADER_H - 1, T_BG);
@@ -376,7 +378,7 @@ String fmtPrice(long value) {
 
 // ---------- Info: tab strip ----------
 
-enum InfoTab : uint8_t { TAB_GOLD, TAB_COIN, TAB_STOCK, TAB_WEATHER, TAB_CALENDAR, INFO_TABS };
+enum InfoTab : uint8_t { TAB_GOLD, TAB_COIN, TAB_STOCK, TAB_WEATHER, TAB_CALENDAR, TAB_HEALTH, INFO_TABS };
 uint8_t infoTab = TAB_GOLD;
 
 struct InfoTabSpec {
@@ -386,7 +388,8 @@ struct InfoTabSpec {
 };
 constexpr InfoTabSpec INFO_TAB_SPECS[INFO_TABS] = {
     {"Gold", Icon::Gold, 0xffd60a},   {"Coin", Icon::Coin, 0xff9f0a},          {"Stock", Icon::Trend, 0x30d158},
-    {"Weather", Icon::Cloud, 0x64d2ff}, {"Calendar", Icon::Calendar, 0xff375f},
+    {"Weather", Icon::Cloud, 0x64d2ff}, {"Date", Icon::Calendar, 0xff375f},
+    {"Health", Icon::Activity, 0x30d158},
 };
 // Tab strip box under the header; content area below it.
 constexpr int TAB_X = 6, TAB_Y = UI_HEADER_H + 1, TAB_W = 308, TAB_H = 30, TAB_GAP = 3;
@@ -506,12 +509,41 @@ void drawCalendarTab() {
   snprintf(text, sizeof(text), "%s %d", MONTH_SHORT[month - 1], year);
   uiText(text, cx, cardY + 64, 2);
   tft.drawFastHLine(cardX + 16, cardY + 78, cardW - 32, T_DIVIDER);
-  uiText(today.leap ? "LUNAR (LEAP)" : "LUNAR", cx, cardY + 90, 1);
+  uiText(today.leap ? "LUNAR (LEAP)" : "LUNAR", cx, cardY + 88, 1);
   tft.setTextColor(T_ACCENT, T_CARD_ALT);
   snprintf(text, sizeof(text), "%d/%d", today.day, today.month);
-  uiText(text, cx, cardY + 110, 4);
+  uiText(text, cx, cardY + 106, 4);
   tft.setTextColor(T_MUTED, T_CARD_ALT);
-  uiText(canChiYear(today.year), cx, cardY + 134, 2);
+  uiText(canChiYear(today.year), cx, cardY + 124, 2);
+
+  // Next holiday: name on up to two lines, then how far away.
+  const VnHoliday *next = nullptr;
+  const int toHoliday = daysToHoliday(day, month, year, &next);
+  if (toHoliday >= 0) {
+    const int maxW = cardW - 8;
+    const String name = next->vi;
+    String first = name, second;
+    if (viTextWidth(name) > maxW) {
+      int cut = -1;
+      for (int i = name.indexOf(' '); i > 0; i = name.indexOf(' ', i + 1)) {
+        if (viTextWidth(name.substring(0, i)) > maxW) break;
+        cut = i;
+      }
+      if (cut > 0) {
+        first = name.substring(0, cut);
+        second = fitViText(name.substring(cut + 1), maxW);
+      } else {
+        first = fitViText(name, maxW);
+      }
+    }
+    const uint16_t color = toHoliday == 0 ? T_GOLD : T_TEXT;
+    drawViText(tft, cx - viTextWidth(first) / 2, cardY + 131, first, color, T_CARD_ALT);
+    if (second.length()) drawViText(tft, cx - viTextWidth(second) / 2, cardY + 145, second, color, T_CARD_ALT);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(toHoliday == 0 ? T_GOLD : T_MUTED, T_CARD_ALT);
+    const String when = toHoliday == 0 ? String("today") : (toHoliday == 1 ? String("tomorrow") : String("in ") + toHoliday + " days");
+    uiTextIn(UiFont::Tiny, when, cx, cardY + (second.length() ? 162 : 152));
+  }
 
   // Right: Monday-first month grid with the lunar day under each solar day.
   constexpr int gridX = 108, gridW = 204, headY = INFO_Y + 7, weekY = INFO_Y + 20, rowsY = INFO_Y + 30;
@@ -537,7 +569,8 @@ void drawCalendarTab() {
     const bool isToday = d == day;
     const uint16_t bg = isToday ? T_LINK : T_CARD;
     if (isToday) tft.fillRoundRect(x + 1, y, colW - 2, rowH - 1, 5, T_LINK);
-    tft.setTextColor(isToday ? 0xFFFF : (cell % 7 == 6 ? T_DOWN : T_TEXT), bg);
+    const bool holiday = vnHoliday(d, month, year) != nullptr;
+    tft.setTextColor(isToday ? 0xFFFF : (holiday ? T_GOLD : (cell % 7 == 6 ? T_DOWN : T_TEXT)), bg);
     uiText(String(d), x + colW / 2, y + 7, 2);
     const bool special = l.day == 1 || l.day == 15;
     snprintf(text, sizeof(text), l.day == 1 ? "%d/%d" : "%d", l.day, l.month);
@@ -716,6 +749,226 @@ void drawWeatherTab() {
   drawInfoFooter("Open-Meteo", weather.date, weather.time);
 }
 
+// ---------- Info: Health (time at the PC, auto-lock) ----------
+
+constexpr int HL_TILE_Y = INFO_Y + 5, HL_TILE_H = 34;
+constexpr int HL_CHART_Y = INFO_Y + 46;  // labels; bars below
+constexpr int HL_BAR_TOP = HL_CHART_Y + 12, HL_BAR_H = 46;
+constexpr int HL_LOCK_Y = 184, HL_LOCK_H = 50;
+constexpr int HL_SWITCH_W = 40, HL_SWITCH_H = 20;
+
+void drawHealthTile(int i, const char *label, const String &value, uint16_t color) {
+  const int w = (UI_SCREEN_W - 12 - 3 * 4) / 4;
+  const int x = 6 + i * (w + 4);
+  tft.fillRoundRect(x, HL_TILE_Y, w, HL_TILE_H, 6, T_CARD_ALT);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_MUTED, T_CARD_ALT);
+  uiTextIn(UiFont::Tiny, label, x + 6, HL_TILE_Y + 4);
+  tft.setTextDatum(BL_DATUM);
+  tft.setTextColor(color, T_CARD_ALT);
+  uiTextIn(UiFont::BodyBold, value, x + 6, HL_TILE_Y + HL_TILE_H - 3);
+}
+
+void drawHealthLock() {
+  const ActivityInfo &a = activity;
+  tft.fillRoundRect(6, HL_LOCK_Y, UI_SCREEN_W - 12, HL_LOCK_H, 8, T_CARD_ALT);
+  drawIcon(tft, Icon::Lock, 16, HL_LOCK_Y + 8, 16, a.lockOn ? T_TEXT : T_MUTED, T_CARD_ALT);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_TEXT, T_CARD_ALT);
+  uiTextIn(UiFont::BodyBold, "AUTO-LOCK", 40, HL_LOCK_Y + 16);
+  tft.setTextColor(T_MUTED, T_CARD_ALT);
+  uiTextIn(UiFont::Tiny, "when the iPhone leaves", 40 + uiTextWidthIn(UiFont::BodyBold, "AUTO-LOCK") + 8, HL_LOCK_Y + 17);
+  String status = "No iPhone link on the deck";
+  uint16_t color = T_MUTED;
+  if (a.near == PhoneNear::Near) {
+    status = "iPhone near";
+    color = T_UP;
+  } else if (a.near == PhoneNear::Away) {
+    status = "iPhone away";
+    color = T_DOWN;
+  }
+  if (a.hasRssi) status += String("   ") + a.rssi + " dBm";
+  tft.setTextColor(color, T_CARD_ALT);
+  uiTextIn(UiFont::Small, status, 16, HL_LOCK_Y + 36);
+  const int sx = UI_SCREEN_W - 12 - HL_SWITCH_W - 8, sy = HL_LOCK_Y + (HL_LOCK_H - HL_SWITCH_H) / 2;
+  tft.fillRoundRect(sx, sy, HL_SWITCH_W, HL_SWITCH_H, HL_SWITCH_H / 2, a.lockOn ? T_UP : T_LINE);
+  tft.fillCircle(a.lockOn ? sx + HL_SWITCH_W - HL_SWITCH_H / 2 : sx + HL_SWITCH_H / 2, sy + HL_SWITCH_H / 2,
+                 HL_SWITCH_H / 2 - 3, T_TEXT);
+}
+
+void drawHealthTab() {
+  const ActivityInfo &a = activity;
+  if (!a.has) {
+    drawInfoEmpty("Waiting for the PC bridge");
+    return;
+  }
+  drawHealthTile(0, "TODAY", activityDuration(a.todayMin), T_TEXT);
+  drawHealthTile(1, "SITTING", a.sessionMin ? activityDuration(a.sessionMin) : String("break"),
+                 a.sessionMin >= 50 ? T_ACCENT : T_TEXT);
+  drawHealthTile(2, "BREAKS", String(a.breaks), T_UP);
+  drawHealthTile(3, "LONGEST", activityDuration(a.longestMin), T_TEXT);
+
+  // Active minutes per hour today (0-60 each).
+  constexpr int slot = 8, chartX = 10;
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(a.late ? T_DOWN : T_MUTED, T_CARD);
+  uiTextIn(UiFont::Tiny, a.late ? "LATE - TIME TO REST" : "TODAY BY HOUR", chartX, HL_CHART_Y);
+  const int hourNow = clockHour();
+  const int base = HL_BAR_TOP + HL_BAR_H;
+  tft.drawFastHLine(chartX, base, slot * 24, T_DIVIDER);
+  for (int h = 0; h < 24; ++h) {
+    const int barH = a.hours[h] ? max(2, HL_BAR_H * a.hours[h] / 60) : 0;
+    if (barH) tft.fillRect(chartX + h * slot + 1, base - barH, slot - 2, barH, h == hourNow ? T_ACCENT : T_UP);
+  }
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(T_MUTED, T_CARD);
+  for (int h = 0; h < 24; h += 6) uiTextIn(UiFont::Tiny, String(h), chartX + h * slot + slot / 2, base + 3);
+
+  // Last 7 days.
+  constexpr int weekX = 216, weekSlot = 13;
+  tft.setTextDatum(TL_DATUM);
+  uiTextIn(UiFont::Tiny, "7 DAYS", weekX, HL_CHART_Y);
+  uint16_t most = 60;
+  for (uint16_t v : a.week) most = max(most, v);
+  tft.drawFastHLine(weekX, base, weekSlot * 7, T_DIVIDER);
+  int d, m, y;
+  const int todayDow = deckDate(d, m, y) ? dayOfWeek(d, m, y) : -1;
+  const char *const INITIALS = "MTWTFSS";
+  tft.setTextDatum(TC_DATUM);
+  for (int i = 0; i < 7; ++i) {
+    const int barH = a.week[i] ? max(2, static_cast<int>(HL_BAR_H * static_cast<uint32_t>(a.week[i]) / most)) : 0;
+    const int x = weekX + i * weekSlot;
+    if (barH) tft.fillRect(x + 2, base - barH, weekSlot - 4, barH, i == 6 ? T_ACCENT : T_ACCENT_2);
+    if (todayDow >= 0) uiTextIn(UiFont::Tiny, String(INITIALS[(todayDow - (6 - i) + 14) % 7]), x + weekSlot / 2, base + 3);
+  }
+  drawHealthLock();
+}
+
+void touchHealthTab(uint16_t x, uint16_t y) {
+  if (!activity.has || y < HL_LOCK_Y || y > HL_LOCK_Y + HL_LOCK_H) return;
+  activity.lockOn = !activity.lockOn;
+  sendLockSet(activity.lockOn);
+  drawHealthLock();
+  waitForRelease();
+}
+
+// ---------- Break reminders (full screen, back to the previous screen) ----------
+
+enum class BreakKind : uint8_t { Stand, Eye };
+BreakKind breakKind = BreakKind::Stand;
+Screen breakReturnTo = Screen::Home;
+uint32_t breakEyeUntil = 0;
+uint32_t eyeSeqSeen = 0;
+int breakDrawnSecond = -1;
+constexpr uint32_t EYE_REST_MS = 20000;
+constexpr int BRK_BTN_Y = 176, BRK_BTN_H = 46, BRK_BTN_W = 138;
+
+void drawBreakCountdown() {
+  const int left = max<int32_t>(0, static_cast<int32_t>(breakEyeUntil - millis()) / 1000 + 1);
+  if (left == breakDrawnSecond) return;
+  breakDrawnSecond = left;
+  tft.fillRect(100, 160, 120, 56, T_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_GOLD, T_BG);
+  uiText(String(left), UI_SCREEN_W / 2, 188, 6);
+}
+
+void drawBreakV2() {
+  tft.fillScreen(T_BG);
+  tft.setTextDatum(MC_DATUM);
+  if (breakKind == BreakKind::Eye) {
+    drawIcon(tft, Icon::Sun, UI_SCREEN_W / 2 - 20, 22, 40, T_GOLD, T_BG);
+    tft.setTextColor(T_TEXT, T_BG);
+    uiText("REST YOUR EYES", UI_SCREEN_W / 2, 96, 4);
+    tft.setTextColor(T_MUTED, T_BG);
+    uiTextIn(UiFont::Small, "Look at something 6 m away", UI_SCREEN_W / 2, 126);
+    uiTextIn(UiFont::Tiny, "tap to close", UI_SCREEN_W / 2, 228);
+    breakDrawnSecond = -1;
+    drawBreakCountdown();
+    return;
+  }
+  drawIcon(tft, Icon::Activity, UI_SCREEN_W / 2 - 20, 18, 40, T_UP, T_BG);
+  tft.setTextColor(T_TEXT, T_BG);
+  uiText("STAND UP", UI_SCREEN_W / 2, 92, 4);
+  tft.setTextColor(T_MUTED, T_BG);
+  uiTextIn(UiFont::Small, String("At the PC for ") + activityDuration(activity.sessionMin) + " without a break",
+           UI_SCREEN_W / 2, 124);
+  uiTextIn(UiFont::Small, activity.late ? "It's late - wrap up soon" : "Walk, stretch, refill your water",
+           UI_SCREEN_W / 2, 146);
+  tft.fillRoundRect(16, BRK_BTN_Y, BRK_BTN_W, BRK_BTN_H, 10, T_CARD);
+  tft.fillRoundRect(UI_SCREEN_W - 16 - BRK_BTN_W, BRK_BTN_Y, BRK_BTN_W, BRK_BTN_H, 10, T_UP);
+  tft.setTextColor(T_TEXT, T_CARD);
+  uiTextIn(UiFont::BodyBold, "SNOOZE 10M", 16 + BRK_BTN_W / 2, BRK_BTN_Y + BRK_BTN_H / 2);
+  tft.setTextColor(T_BG, T_UP);
+  uiTextIn(UiFont::BodyBold, "DONE", UI_SCREEN_W - 16 - BRK_BTN_W / 2, BRK_BTN_Y + BRK_BTN_H / 2);
+}
+
+void openBreak(BreakKind kind) {
+  breakKind = kind;
+  if (screen != Screen::Break) breakReturnTo = screen;
+  if (kind == BreakKind::Eye) breakEyeUntil = millis() + EYE_REST_MS;
+  bannerActive = false;
+  noteActivity();
+  uiShow(Screen::Break);
+}
+
+void closeBreak() { uiShow(breakReturnTo); }
+
+void touchBreakV2(uint16_t x, uint16_t y) {
+  if (breakKind == BreakKind::Eye) {
+    waitForRelease();
+    closeBreak();
+    return;
+  }
+  if (y < BRK_BTN_Y || y > BRK_BTN_Y + BRK_BTN_H) return;
+  if (x < 16 + BRK_BTN_W) {
+    sendBreakReply("snooze");
+  } else if (x > UI_SCREEN_W - 16 - BRK_BTN_W) {
+    sendBreakReply("ok");
+  } else {
+    return;
+  }
+  activity.standDue = false;  // the bridge's next frame confirms it
+  waitForRelease();
+  closeBreak();
+}
+
+void breakTick() {
+  if (screen != Screen::Break || breakKind != BreakKind::Eye) return;
+  if (static_cast<int32_t>(breakEyeUntil - millis()) <= 0) {
+    closeBreak();
+    return;
+  }
+  drawBreakCountdown();
+}
+
+bool activityLockOnlyChanged(const ActivityInfo &a, const ActivityInfo &b) {
+  if (a.todayMin != b.todayMin || a.sessionMin != b.sessionMin || a.breaks != b.breaks ||
+      a.longestMin != b.longestMin || a.late != b.late)
+    return false;
+  return memcmp(a.hours, b.hours, sizeof(a.hours)) == 0 && memcmp(a.week, b.week, sizeof(a.week)) == 0;
+}
+
+void uiActivityFrame(const ActivityInfo &previous) {
+  if (!previous.has) eyeSeqSeen = activity.eyeSeq;  // first frame after boot: no stale eye reminder
+  // Never cover a permission prompt or a running game.
+  const bool canOpen = !claude.askId && screen != Screen::Aram && screen != Screen::Break;
+  if (activity.standDue && !previous.standDue && canOpen) {
+    openBreak(BreakKind::Stand);
+  } else if (activity.eyeSeq != eyeSeqSeen) {
+    eyeSeqSeen = activity.eyeSeq;
+    if (canOpen && !activity.standDue) openBreak(BreakKind::Eye);
+  }
+  if (screen == Screen::Break && breakKind == BreakKind::Stand && !activity.standDue) {
+    closeBreak();  // a real break happened
+    return;
+  }
+  if (screen == Screen::Info && infoTab == TAB_HEALTH) {
+    if (activityLockOnlyChanged(previous, activity) && previous.has) drawHealthLock();
+    else fullRedrawRequested = true;
+  }
+}
+
 // ---------- Info: screen ----------
 
 void drawInfoV2() {
@@ -728,6 +981,7 @@ void drawInfoV2() {
     case TAB_STOCK: drawStockTab(); break;
     case TAB_WEATHER: drawWeatherTab(); break;
     case TAB_CALENDAR: drawCalendarTab(); break;
+    case TAB_HEALTH: drawHealthTab(); break;
     default: break;
   }
 }
@@ -737,7 +991,9 @@ void touchInfoV2(uint16_t x, uint16_t y) {
   if (tab >= 0 && tab != infoTab) {
     infoTab = tab;
     fullRedrawRequested = true;
+    return;
   }
+  if (infoTab == TAB_HEALTH) touchHealthTab(x, y);
 }
 
 // ---------- Notifications ----------
@@ -1216,6 +1472,13 @@ void drawStandbyText() {
     const LunarDate lunar = solarToLunar(d, m, y);
     snprintf(text, sizeof(text), "%d/%d AL", lunar.day, lunar.month);
     drawShadowText(text, STANDBY_TEXT_R, 144, 2, STANDBY_SOFT);
+    const VnHoliday *next = nullptr;
+    const int toHoliday = daysToHoliday(d, m, y, &next, 7);
+    if (toHoliday == 0) {
+      drawShadowText(next->ascii, STANDBY_TEXT_R, 162, 2, T_GOLD);
+    } else if (toHoliday > 0) {
+      drawShadowText(String(next->ascii) + " " + toHoliday + "d", STANDBY_TEXT_R, 162, 2, STANDBY_SOFT);
+    }
   }
 
   if (weather.has) {
@@ -1814,6 +2077,7 @@ void uiRenderFullV2() {
     case Screen::Notify: drawNotifyV2(); break;
     case Screen::Settings: drawSettingsV2(); break;
     case Screen::Aram: drawAramV2(); break;
+    case Screen::Break: drawBreakV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -1823,6 +2087,7 @@ void uiRenderFullV2() {
 void uiRenderDynamicV2() {
   aramCheckStale();
   claudeCheckStaleAsk();
+  breakTick();
   if (bannerActive && static_cast<int32_t>(bannerUntil - millis()) <= 0) {
     bannerActive = false;
     fullRedrawRequested = true;  // repaint what the banner covered
@@ -1863,6 +2128,10 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     uiShow(Screen::Notify);
     return;
   }
+  if (screen == Screen::Break) {
+    touchBreakV2(x, y);
+    return;
+  }
   if (screen == Screen::Standby) {
     uiShow(Screen::Home);
     waitForRelease();
@@ -1893,7 +2162,7 @@ void uiOpenForShot(const char *name, int tab) {
   } SCREENS[] = {{"home", Screen::Home},       {"monitor", Screen::Monitor}, {"controls", Screen::Controls},
                  {"info", Screen::Info},       {"claude", Screen::Claude},   {"aitools", Screen::AiTools},
                  {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings},
-                 {"aram", Screen::Aram}};
+                 {"aram", Screen::Aram},       {"break", Screen::Break}};
   for (const auto &entry : SCREENS) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }
@@ -1901,6 +2170,10 @@ void uiOpenForShot(const char *name, int tab) {
   if (tab >= 0 && screen == Screen::Settings) settingsTab = tab % SET_TABS;
   if (tab >= 0 && screen == Screen::Controls) controlsPage = tab % MACRO_PAGES;
   if (tab >= 0 && screen == Screen::Claude) claudeTab = tab % CLAUDE_TABS;
+  if (screen == Screen::Break) {
+    breakKind = tab == 1 ? BreakKind::Eye : BreakKind::Stand;
+    breakEyeUntil = millis() + EYE_REST_MS;
+  }
   bannerActive = false;
   lastActivityMs = millis();
 }

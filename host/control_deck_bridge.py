@@ -1147,6 +1147,18 @@ def start_claude_usage(config: dict[str, Any]) -> Any:
     return feed
 
 
+def start_activity(config: dict[str, Any]) -> Any:
+    """Time at the PC, break reminders and lock-when-the-phone-leaves; None when off."""
+    settings = config.get("activity", {})
+    if not settings.get("enabled", True):
+        return None
+    from activity import ActivityService
+
+    service = ActivityService(config, Path(__file__).with_name("activity_state.json"), log=log)
+    service.start()
+    return service
+
+
 def focus_window(name: str) -> None:
     """Best effort: bring forward a window whose title has the session name, else a Claude window."""
     if platform.system() != "Windows":
@@ -1208,6 +1220,7 @@ def run(config: dict[str, Any]) -> None:
     toasts = start_pc_notifications(config)
     claude = start_claude_relay(config)
     claude_usage = start_claude_usage(config)
+    activity = start_activity(config)
 
     psutil.cpu_percent(interval=None)
     previous = current_counters()
@@ -1255,6 +1268,7 @@ def run(config: dict[str, Any]) -> None:
                 sent_claude_version = -1
                 sent_claude_stats = -1
                 sent_claude_usage = -1
+                sent_activity = -1
                 device_wifi: tuple[str, int] | None = None
                 receive_buffer = bytearray()
 
@@ -1290,6 +1304,12 @@ def run(config: dict[str, Any]) -> None:
                             send_json(serial_port, usage_frame)
                             sent_claude_usage = usage_version
 
+                    if activity is not None:
+                        activity_version, activity_frame = activity.snapshot()
+                        if activity_frame is not None and activity_version != sent_activity:
+                            send_json(serial_port, activity_frame)
+                            sent_activity = activity_version
+
                     forward_pc_toasts(toasts, serial_port, device_wifi, config)
 
                     chunk = serial_port.read(256)
@@ -1308,6 +1328,8 @@ def run(config: dict[str, Any]) -> None:
 
                             message_type = message.get("type")
                             if handle_claude_message(claude, message):
+                                pass
+                            elif activity is not None and activity.handle(message):
                                 pass
                             elif message_type == "macro":
                                 execute_macro(config, int(message.get("id", 0)))
@@ -1330,6 +1352,7 @@ def run(config: dict[str, Any]) -> None:
                                 sent_claude_version = -1
                                 sent_claude_stats = -1
                                 sent_claude_usage = -1
+                                sent_activity = -1
                                 device_wifi = None
                             elif message_type == "wifi_status":
                                 if message.get("connected") and message.get("ip"):
@@ -1344,7 +1367,7 @@ def run(config: dict[str, Any]) -> None:
                                     f"ESP protocol error: {message.get('code', 'unknown')} "
                                     f"({message.get('detail', '')})"
                                 )
-                            elif message_type not in {"pong", "rebooting"}:
+                            elif message_type not in {"pong", "rebooting", "phone"}:
                                 log(f"ESP: {message}")
 
                     time.sleep(0.01)
