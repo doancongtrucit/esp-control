@@ -15,6 +15,7 @@
 #include "ancs.h"
 #include "aram.h"
 #include "activity_info.h"
+#include "home_server_info.h"
 #include "claude_status.h"
 #include "color_util.h"
 #include "deck_settings.h"
@@ -291,6 +292,7 @@ ClaudeUsage claudeUsage;     // tokens and estimated cost today ("cusage")
 uint32_t claudeUsageRxMs = 0;
 ClaudeStats claudeStats;     // daily ask / answer / done counts ("cstats")
 ActivityInfo activity;       // time at the PC, reminders, auto-lock ("activity")
+HomeServerInfo homeServer;   // Home Assistant server metrics ("hserver")
 #endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
@@ -310,6 +312,7 @@ void uiLinksChanged();
 void uiClaudeFrame(const ClaudeState &next);
 void uiClaudeInfoChanged();
 void uiActivityFrame(const ActivityInfo &previous);
+void uiHomeServerChanged();
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -1435,6 +1438,10 @@ void handleActivity(JsonDocument &doc) {
   if (parseActivityFrame(doc.as<JsonVariantConst>(), activity)) uiActivityFrame(previous);
 }
 
+void handleHomeServer(JsonDocument &doc) {
+  if (parseHomeServerFrame(doc.as<JsonVariantConst>(), homeServer)) uiHomeServerChanged();
+}
+
 void handleNotify(JsonDocument &doc) {
   const char *src = doc["src"] | "pc";
   addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
@@ -1587,6 +1594,8 @@ void dispatchFrame(JsonDocument &doc) {
     handleClaudeStats(doc);
   } else if (strcmp(type, "activity") == 0) {
     handleActivity(doc);
+  } else if (strcmp(type, "hserver") == 0) {
+    handleHomeServer(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {

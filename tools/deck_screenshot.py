@@ -54,7 +54,7 @@ def sample_frames() -> list[dict]:
         {"type": "info", "g": {"time": stamp, "items": [
             {"n": "SJC 1L", "b": 12150, "s": 12350, "c": 50}, {"n": "Nhan 9999", "b": 11620, "s": 11920, "c": -30}],
             "xau": 2381.4, "xauc": -6.2}},
-        coin, stock, weather, ACTIVITY,
+        coin, stock, weather, ACTIVITY, HSERVER,
         bridge.notify_packet("Zalo", "Nhóm Dự án", "Chiều nay họp lúc 3 giờ, nhớ mang tài liệu nhé!", source="phone"),
     ]
 
@@ -82,6 +82,9 @@ ACTIVITY = {"type": "activity", "on": 312, "sess": 52, "brk": 6, "long": 95,
             "h": [0] * 8 + [35, 58, 60, 44, 10, 38, 60, 57, 0, 0, 0, 0, 0, 0, 0, 0],
             "wk": [410, 380, 35, 0, 455, 390, 312], "late": False, "rem": None, "eye": 0,
             "lk": {"on": True, "near": True, "rssi": -58}}
+HSERVER = {"type": "hserver", "name": "Home Server", "on": True, "ms": 18, "ver": "2026.11.1",
+           "cpu": 14.0, "ram": 47.0, "disk": 38.0, "temp": 52.0, "load": 0.36, "dn": 2.4, "up": 0.6,
+           "upt": 273600, "upd": 2, "bat": None, "t": "12:00"}
 CLAUDE_STATS = {"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
 
 

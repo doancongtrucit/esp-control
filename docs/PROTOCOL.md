@@ -157,6 +157,19 @@ Health tab, break reminders and the auto-lock state, from `host/activity.py` (se
 
 Minutes at the PC today, in the current sitting session (0 on a break), breaks (5+ idle minutes), the longest session; `h` per hour today, `wk` per day from 6 days ago to today. `rem` is `"stand"` while the stand-up reminder waits (else null); `eye` grows by one at each eye-rest reminder. `lk`: auto-lock on/off, whether the iPhone is near (null when the deck stopped reporting) and its smoothed RSSI in dBm.
 
+### `hserver` (`cyd_2usb`)
+
+HOME SERVER tab of the Monitor screen, from Home Assistant (see [HOME_SERVER.md](HOME_SERVER.md)), about every 30 s when something changed:
+
+```json
+{"type": "hserver", "name": "Home Server", "on": true, "ms": 18, "ver": "2026.11.1",
+ "cpu": 14.0, "ram": 47.0, "disk": 38.0, "temp": 52.0, "load": 0.36, "dn": 2.4, "up": 0.6,
+ "upt": 273600, "upd": 2, "bat": null, "t": "12:00"}
+{"type": "hserver", "name": "Home Server", "on": false, "err": "offline", "t": "12:00"}
+```
+
+Percentages, degrees C, Mbit/s; `ms` is the API round trip, `upt` seconds since boot, `upd` pending updates; `err` is `offline`, `token` or `error`. Unknown values are null.
+
 ### `wifi` (`cyd_2usb`)
 
 Provisions the device's Wi-Fi and the token for UDP notifications. Sent by the bridge after it opens the port and after every `hello`; the device saves the values in flash and reconnects only when they change.

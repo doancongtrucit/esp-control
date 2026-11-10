@@ -12,7 +12,7 @@ A 2.8-inch touch deck for your desk. It shows your PC at a glance, runs macros, 
 
 | | | |
 | :---: | :---: | :---: |
-| <img src="docs/media/screens/monitor.png" width="260"><br>**Monitor** — CPU, RAM, GPU, VRAM, network, disk | <img src="docs/media/screens/controls-0.png" width="260"><br>**Controls** — 18 macros on 3 pages | <img src="docs/media/screens/controls-1.png" width="260"><br>**Controls** — your own icons and colours |
+| <img src="docs/media/screens/monitor.png" width="260"><br>**Monitor** — CPU, RAM, GPU, VRAM, network, disk | <img src="docs/media/screens/controls-0.png" width="260"><br>**Controls** — 18 macros on 3 pages | <img src="docs/media/screens/monitor-1.png" width="260"><br>**Home server** — your Home Assistant machine |
 | <img src="docs/media/screens/claude-0.png" width="260"><br>**Claude Code** — every session at a glance | <img src="docs/media/screens/claude-1.png" width="260"><br>**Usage** — tokens, estimated cost, 5-hour window | <img src="docs/media/screens/claude-2.png" width="260"><br>**Stats** — replies per hour, answers today |
 | <img src="docs/media/screens/info-0.png" width="260"><br>**Gold** — Vietnamese gold prices | <img src="docs/media/screens/info-1.png" width="260"><br>**Coin** — crypto prices, 24 h change | <img src="docs/media/screens/info-2.png" width="260"><br>**Stock** — VN-Index sparkline and watchlist |
 | <img src="docs/media/screens/info-3.png" width="260"><br>**Weather** — now and next 4 days | <img src="docs/media/screens/info-4.png" width="260"><br>**Date** — lunar calendar and holidays | <img src="docs/media/screens/notify.png" width="260"><br>**Notifications** — iPhone and Windows |
@@ -21,6 +21,8 @@ A 2.8-inch touch deck for your desk. It shows your PC at a glance, runs macros, 
 ## Features
 
 **PC at a glance.** CPU, RAM, GPU and VRAM load with temperatures (LibreHardwareMonitor on Windows), network speed and disk activity, refreshed every 2 seconds. The RGB LED shows the link: green live, blue waiting, red stale.
+
+**Home server.** Swipe the Monitor screen to see the machine that runs Home Assistant: CPU, RAM, disk, temperature, network, uptime, pending updates and whether Home Assistant answers. See [docs/HOME_SERVER.md](docs/HOME_SERVER.md).
 
 **Macros.** 18 buttons on 3 pages, each with an icon and a colour. Launch apps, open URLs, send key combos, run commands, start Ollama. Risky ones (Lock PC) need a 1-second hold. The deck only sends a button number; the actions live in `host/config.json` on your PC.
 
@@ -87,6 +89,7 @@ If more than one USB-serial device is plugged in, set the port in `host/config.j
 | `wifi`, `notifications` | Wi-Fi for the deck and the shared token (generated on first run) | below |
 | `coins`, `stocks`, `weather`, `gold` | What the Info tabs show | `config.example.json` |
 | `claude` | Claude Code relay, answer timeout, usage tab | [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md) |
+| `home_server` | Home Assistant address and token for the HOME SERVER tab | [docs/HOME_SERVER.md](docs/HOME_SERVER.md) |
 | `activity` | Reminders and auto-lock | [docs/HEALTH.md](docs/HEALTH.md) |
 | `wifi_link` | Wi-Fi link when USB is unplugged | [docs/WIFI_LINK.md](docs/WIFI_LINK.md) |
 | `librehardwaremonitor` | Extra temperatures from LibreHardwareMonitor | [docs/TEMPERATURES.md](docs/TEMPERATURES.md) |
@@ -125,6 +128,7 @@ powershell -ExecutionPolicy Bypass -File .\host\install_autostart_windows.ps1
 | | |
 | --- | --- |
 | [CLAUDE_CODE.md](docs/CLAUDE_CODE.md) | Session status, permission prompts, usage and stats |
+| [HOME_SERVER.md](docs/HOME_SERVER.md) | Home Assistant server on the Monitor screen |
 | [HEALTH.md](docs/HEALTH.md) | Time at the PC, break reminders, auto-lock |
 | [WIFI_LINK.md](docs/WIFI_LINK.md) | Running the deck without a USB data cable |
 | [MACROS.md](docs/MACROS.md) | Button actions, icons and colours |

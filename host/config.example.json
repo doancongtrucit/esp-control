@@ -183,6 +183,12 @@
     "late_hour": 23,
     "lock": {"enabled": true, "rssi_away": -85, "away_seconds": 30, "idle_seconds": 60}
   },
+  "home_server": {
+    "enabled": true,
+    "url": "",
+    "token": "",
+    "name": "Home Server"
+  },
   "coins": [
     "bitcoin",
     "ethereum",

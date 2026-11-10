@@ -1223,6 +1223,16 @@ def read_known_deck_ip() -> str | None:
         return None
 
 
+def start_home_server_feed(config: dict[str, Any]) -> Any:
+    """Home server tab (Home Assistant System Monitor sensors); None without url and token."""
+    from home_server import start_home_server
+
+    feed = start_home_server(config, log=log)
+    if feed is not None:
+        log("Home server tab: reading Home Assistant")
+    return feed
+
+
 def start_udp_hub(config: dict[str, Any]) -> Any:
     """Wi-Fi link to the deck when USB is unplugged; None when off or without a token."""
     settings = config.get("wifi_link") or {}
@@ -1270,6 +1280,7 @@ def serve_device(
     sent_claude_stats = -1
     sent_claude_usage = -1
     sent_activity = -1
+    sent_hserver = -1
     device_wifi: tuple[str, int] | None = None
     if not usb and hub is not None and hub.deck is not None:
         device_wifi = (hub.deck[0], hub.deck_port)
@@ -1284,7 +1295,7 @@ def serve_device(
             last_full = now
             sent_info_version = -1
             sent_feed_versions.clear()
-            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = -1
+            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = sent_hserver = -1
             send_json(link, macro_packet(config))
         if now - last_send >= interval:
             payload, ctx["previous"] = get_stats(ctx["previous"], disk_path, lhm)
@@ -1320,6 +1331,13 @@ def serve_device(
             if activity_frame is not None and activity_version != sent_activity:
                 send_json(link, activity_frame)
                 sent_activity = activity_version
+
+        hserver = ctx.get("hserver")
+        if hserver is not None:
+            hserver_version, hserver_frame = hserver.snapshot()
+            if hserver_frame is not None and hserver_version != sent_hserver:
+                send_json(link, hserver_frame)
+                sent_hserver = hserver_version
 
         forward_pc_toasts(toasts, link, device_wifi if usb else None, config)
 
@@ -1367,6 +1385,7 @@ def serve_device(
                     sent_claude_stats = -1
                     sent_claude_usage = -1
                     sent_activity = -1
+                    sent_hserver = -1
                 elif message_type == "wifi_status":
                     if message.get("connected") and message.get("ip"):
                         device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
@@ -1451,6 +1470,7 @@ def run(config: dict[str, Any]) -> None:
         "claude_usage": start_claude_usage(config),
         "activity": start_activity(config),
         "hub": start_udp_hub(config),
+        "hserver": start_home_server_feed(config),
     }
     psutil.cpu_percent(interval=None)
     ctx["previous"] = current_counters()

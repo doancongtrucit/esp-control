@@ -199,8 +199,37 @@ constexpr int MON_BOX_H = 74;
 
 String tempText(float celsius) { return isnan(celsius) ? String("N/A") : fmtValue(celsius) + "C"; }
 
+enum MonitorTab : uint8_t { MON_PC, MON_SERVER, MON_TABS };
+uint8_t monitorTab = MON_PC;
+
+void drawMonitorTabDots() {
+  for (int i = 0; i < MON_TABS; ++i)
+    tft.fillCircle(196 + i * 10, UI_HEADER_H / 2, 3, i == monitorTab ? T_TEXT : T_DIVIDER);
+}
+
+void drawServerStatic() {
+  drawHeaderV2("HOME SERVER", true);
+  drawMonitorTabDots();
+  const char *names[4] = {"CPU", "RAM", "DISK", "TEMP"};
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_INK, T_SURFACE);
+  for (int i = 0; i < 4; ++i) uiText(names[i], 10, MON_ROW_Y[i] + 8, 2);
+  const char *boxes[2] = {"NETWORK", "HOME ASSISTANT"};
+  for (int i = 0; i < 2; ++i) {
+    const int x = 10 + i * 153;
+    tft.fillRoundRect(x, MON_BOX_Y, 147, MON_BOX_H, 8, T_TILE);
+    tft.setTextColor(T_MUTED, T_TILE);
+    uiText(boxes[i], x + 8, MON_BOX_Y + 12, 1);
+  }
+}
+
 void drawMonitorV2Static() {
+  if (monitorTab == MON_SERVER) {
+    drawServerStatic();
+    return;
+  }
   drawHeaderV2("MONITOR", true);
+  drawMonitorTabDots();
   const char *names[4] = {"CPU", "RAM", "GPU", "VRAM"};
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_INK, T_SURFACE);
@@ -214,7 +243,7 @@ void drawMonitorV2Static() {
   }
 }
 
-void drawMonitorRow(int row, float pct, const String &aux) {
+void drawMonitorRow(int row, float pct, const String &aux, const String &valueText = String()) {
   const int y = MON_ROW_Y[row];
   tft.fillRoundRect(MON_BAR_X, y + 3, MON_BAR_W, 10, 5, T_TILE);
   const int fill = static_cast<int>((MON_BAR_W - 2) * clampPct(pct) / 100.0f);
@@ -222,7 +251,7 @@ void drawMonitorRow(int row, float pct, const String &aux) {
   tft.fillRect(MON_BAR_X + MON_BAR_W + 4, y - 2, UI_SCREEN_W - MON_BAR_X - MON_BAR_W - 4, 20, T_SURFACE);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_INK, T_SURFACE);
-  uiText(fmtValue(pct) + "%", 226, y + 8, 2);
+  uiText(valueText.length() ? valueText : fmtValue(pct) + "%", 226, y + 8, 2);
   tft.setTextColor(T_MUTED, T_SURFACE);
   uiText(aux, UI_SCREEN_W - 8, y + 8, 2);
 }
@@ -237,7 +266,44 @@ void drawMonitorBox(int index, const String &value, const String &detail) {
   uiText(detail, x + 8, MON_BOX_Y + 54, 2);
 }
 
+void drawServerStatus(const String &value, uint16_t color, const String &detail) {
+  const int x = 10 + 153;
+  tft.fillRect(x + 6, MON_BOX_Y + 22, 135, 46, T_TILE);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(color, T_TILE);
+  uiText(value, x + 8, MON_BOX_Y + 32, 2);
+  tft.setTextColor(T_MUTED, T_TILE);
+  uiText(detail, x + 8, MON_BOX_Y + 54, 2);
+}
+
+void drawServerDynamic() {
+  const HomeServerInfo &h = homeServer;
+  const bool live = h.has && h.online;
+  const float cpu = live ? h.cpu : NAN, ram = live ? h.ram : NAN, disk = live ? h.disk : NAN;
+  const float temp = live ? h.temp : NAN;
+  drawMonitorRow(0, cpu, isnan(h.load) || !live ? String("") : "load " + String(h.load, 2));
+  drawMonitorRow(1, ram, isnan(h.battery) || !live ? String("") : "bat " + fmtValue(h.battery) + "%");
+  drawMonitorRow(2, disk, "");
+  drawMonitorRow(3, isnan(temp) ? NAN : temp, "", isnan(temp) ? String("--C") : fmtValue(temp) + "C");
+  drawMonitorBox(0, "DN " + fmtValue(live ? h.downMbps : NAN, 1) + " Mb/s",
+                 "UP " + fmtValue(live ? h.upMbps : NAN, 1) + " Mb/s");
+  if (!h.has) {
+    drawServerStatus("NOT SET UP", T_MUTED, "home_server in config");
+  } else if (!h.online) {
+    const String why = h.error == "token" ? "token rejected" : (h.error == "offline" ? "no reply" : "API error");
+    drawServerStatus("OFFLINE", T_DOWN, why + " " + h.time);
+  } else {
+    String detail = "up " + uptimeText(h.uptimeSec);
+    if (h.updates) detail += "  " + String(h.updates) + (h.updates == 1 ? " update" : " updates");
+    drawServerStatus("ONLINE  " + String(h.latencyMs) + " ms", T_UP, detail);
+  }
+}
+
 void drawMonitorV2Dynamic() {
+  if (monitorTab == MON_SERVER) {
+    drawServerDynamic();
+    return;
+  }
   drawMonitorRow(0, stats.cpu, tempText(isnan(stats.cpuTemp) ? stats.systemTemp : stats.cpuTemp));
   drawMonitorRow(1, stats.ram, memoryText(stats.ramUsedGB, stats.ramTotalGB));
   drawMonitorRow(2, stats.gpu, tempText(stats.gpuTemp));
@@ -2168,6 +2234,7 @@ void uiOpenForShot(const char *name, int tab) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }
   if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
+  if (tab >= 0 && screen == Screen::Monitor) monitorTab = tab % MON_TABS;
   if (tab >= 0 && screen == Screen::Settings) settingsTab = tab % SET_TABS;
   if (tab >= 0 && screen == Screen::Controls) controlsPage = tab % MACRO_PAGES;
   if (tab >= 0 && screen == Screen::Claude) claudeTab = tab % CLAUDE_TABS;
@@ -2183,6 +2250,7 @@ void uiOpenForShot(const char *name, int tab) {
 void uiSwipeV2(int step) {
   switch (screen) {
     case Screen::Info: infoTab = (infoTab + INFO_TABS + step) % INFO_TABS; break;
+    case Screen::Monitor: monitorTab = (monitorTab + MON_TABS + step) % MON_TABS; break;
     case Screen::Settings: settingsTab = (settingsTab + SET_TABS + step) % SET_TABS; break;
     case Screen::Controls: controlsPage = (controlsPage + MACRO_PAGES + step) % MACRO_PAGES; break;
     case Screen::Claude:
@@ -2193,6 +2261,10 @@ void uiSwipeV2(int step) {
     default: return;
   }
   fullRedrawRequested = true;
+}
+
+void uiHomeServerChanged() {
+  if (screen == Screen::Monitor && monitorTab == MON_SERVER) drawServerDynamic();
 }
 
 void uiConfigChanged() {

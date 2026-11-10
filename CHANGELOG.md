@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- HOME SERVER tab on the Monitor screen (`cyd_2usb`, swipe from PC): CPU and load, RAM, disk, CPU temperature, network in/out, Home Assistant status and latency, uptime and pending updates, read by the bridge from Home Assistant's System Monitor sensors over its REST API (`host/home_server.py`, `home_server` in `host/config.json`).
 - `cyd_2usb` environment for the ESP32-2432S028 (USB-C + micro-USB, ST7789) with its separate XPT2046 touch bus.
 - 18 macros on three pages, hold-to-confirm, per-macro icons, gold price page (vang.today, thousand VND per chi).
 - UI v2 on `cyd_2usb`: Home grid, header Home button, Agentic light theme, English labels.
