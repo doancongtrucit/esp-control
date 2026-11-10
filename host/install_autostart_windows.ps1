@@ -18,7 +18,7 @@ $Shortcut = $Shell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $Pythonw
 $Shortcut.Arguments = '"' + $Bridge + '" --config "' + $Config + '"'
 $Shortcut.WorkingDirectory = $Root
-$Shortcut.Description = "ESP32 PC Control Deck telemetry bridge"
+$Shortcut.Description = "ESP Control Deck bridge"
 $Shortcut.Save()
 
 Write-Host "Installed PC Control Deck Bridge startup shortcut:"

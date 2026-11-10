@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ESP32 PC Control Deck host bridge.
+"""ESP Control Deck host bridge.
 
 The bridge collects local PC telemetry and sends it to a 2.8-inch ESP32
 display (Elecrow or ESP32-2432S028) through the board's CH340 USB serial
@@ -459,7 +459,7 @@ class LibreHardwareMonitorHttpReader:
     def _fetch(self) -> Any:
         request = urllib.request.Request(
             self.url,
-            headers={"User-Agent": f"ESP32-PC-Control-Deck/{APP_VERSION}"},
+            headers={"User-Agent": f"ESP-Control-Deck/{APP_VERSION}"},
         )
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read().decode("utf-8", errors="replace"))
@@ -1504,7 +1504,7 @@ def run(config: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="ESP32 PC Control Deck host bridge")
+    parser = argparse.ArgumentParser(description="ESP Control Deck host bridge")
     parser.add_argument(
         "--config",
         default=str(Path(__file__).with_name("config.json")),

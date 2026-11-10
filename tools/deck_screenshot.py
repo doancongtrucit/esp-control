@@ -140,12 +140,15 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     deck = Deck(args.port)
     if not args.no_data:
-        for frame in sample_frames():
+        frames = sample_frames()
+        for frame in frames:
             deck.send(frame)
         time.sleep(3)  # let the notification banner time out
+        deck.send(frames[0])  # stats again: opening the port can reboot the board and drop the first frames
     shots = []
     for target in args.targets:
         screen, _, tab = target.partition(":")
+        name = screen + (f"-{tab}" if tab else "")
         if screen == "claude" and not args.no_data:
             deck.send(claude_frame(ask=tab == "3"))
             deck.send(CLAUDE_USAGE)
@@ -154,7 +157,6 @@ def main() -> None:
             if tab == "3":
                 tab = "0"
         image = deck.shot(screen, int(tab) if tab else -1)
-        name = screen + (f"-{tab}" if tab else "")
         image.save(args.out / f"{name}.png")
         shots.append((name, image))
         print(f"{name}.png")

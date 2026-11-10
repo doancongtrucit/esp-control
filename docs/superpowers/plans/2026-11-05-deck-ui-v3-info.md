@@ -110,7 +110,7 @@
 
 ### Task 8: Docs, verification, backup
 
-- [ ] Step 1: README fork section (dark UI, Info tabs, feeds and their sources, config keys), PROTOCOL (`date` in stats, `coin`, `stock`, `weather`), CHANGELOG.
+- [ ] Step 1: README section (dark UI, Info tabs, feeds and their sources, config keys), PROTOCOL (`date` in stats, `coin`, `stock`, `weather`), CHANGELOG.
 - [ ] Step 2: `pio run` both envs, all device and host tests, hand check list with the user (icons, tabs, lunar month view, feeds updating).
 - [ ] Step 3: local flash backup outside the repository; commit `docs: UI v3 and info hub`; no push without the user.
 

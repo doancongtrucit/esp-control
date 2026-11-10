@@ -1,378 +1,159 @@
-# ESP32 PC Control Deck
+# ESP Control Deck
 
-A USB-connected ESP32 desktop display that monitors a Windows, macOS or Linux computer and works as a small touch control panel.
+A 2.8-inch touch deck for your desk. It shows your PC at a glance, runs macros, answers Claude Code permission prompts, collects iPhone and Windows notifications, tracks markets and weather, and reminds you to stand up. The hardware is a low-cost ESP32-2432S028 board; a small Python bridge on the PC does the rest.
 
-The project turns the Elecrow 2.8-inch ESP32 Solo Miner LCD Display into a practical desk device. One USB cable powers the ESP32, sends live telemetry from the PC to the screen, and sends touch-button events back to the computer. No Wi-Fi or Bluetooth is required.
+<p align="center">
+  <img src="docs/media/screens/home.png" width="31%" alt="Home launcher">
+  <img src="docs/media/screens/claude-3.png" width="31%" alt="Claude Code permission prompt">
+  <img src="docs/media/screens/info-5.png" width="31%" alt="Health tab">
+</p>
 
-Repository: https://github.com/lepczynski-cloud/ESP32-PC-Control-Deck
+## Screens
 
-![ESP32 PC Control Deck on desk](docs/media/ESP32_PC_Control_Deck.jpg)
-
-## Demo
-
-YouTube video: https://www.youtube.com/watch?v=16eqHU4j9Fk
-
-![ESP32 PC Control Deck demo](docs/media/control-deck-demo.gif)
+| | | |
+| :---: | :---: | :---: |
+| <img src="docs/media/screens/monitor.png" width="260"><br>**Monitor** — CPU, RAM, GPU, VRAM, network, disk | <img src="docs/media/screens/controls-0.png" width="260"><br>**Controls** — 18 macros on 3 pages | <img src="docs/media/screens/controls-1.png" width="260"><br>**Controls** — your own icons and colours |
+| <img src="docs/media/screens/claude-0.png" width="260"><br>**Claude Code** — every session at a glance | <img src="docs/media/screens/claude-1.png" width="260"><br>**Usage** — tokens, estimated cost, 5-hour window | <img src="docs/media/screens/claude-2.png" width="260"><br>**Stats** — replies per hour, answers today |
+| <img src="docs/media/screens/info-0.png" width="260"><br>**Gold** — Vietnamese gold prices | <img src="docs/media/screens/info-1.png" width="260"><br>**Coin** — crypto prices, 24 h change | <img src="docs/media/screens/info-2.png" width="260"><br>**Stock** — VN-Index sparkline and watchlist |
+| <img src="docs/media/screens/info-3.png" width="260"><br>**Weather** — now and next 4 days | <img src="docs/media/screens/info-4.png" width="260"><br>**Date** — lunar calendar and holidays | <img src="docs/media/screens/notify.png" width="260"><br>**Notifications** — iPhone and Windows |
+| <img src="docs/media/screens/break-0.png" width="260"><br>**Stand up** — after 50 minutes sitting | <img src="docs/media/screens/break-1.png" width="260"><br>**Rest your eyes** — every 20 minutes | <img src="docs/media/screens/settings-0.png" width="260"><br>**Settings** — display, notifications, links |
 
 ## Features
 
-### PC monitor
+**PC at a glance.** CPU, RAM, GPU and VRAM load with temperatures (LibreHardwareMonitor on Windows), network speed and disk activity, refreshed every 2 seconds. The RGB LED shows the link: green live, blue waiting, red stale.
 
-- CPU usage
-- RAM usage and used/total memory
-- GPU usage
-- VRAM usage and used/total memory
-- GPU temperature through `nvidia-smi`
-- optional CPU, system and storage temperatures through LibreHardwareMonitor on Windows
-- network download and upload speed
-- disk usage and read/write activity
-- PC clock synchronized from the host bridge
-- USB status and stale-data indicator
+**Macros.** 18 buttons on 3 pages, each with an icon and a colour. Launch apps, open URLs, send key combos, run commands, start Ollama. Risky ones (Lock PC) need a 1-second hold. The deck only sends a button number; the actions live in `host/config.json` on your PC.
 
-### Touch controls
+**Claude Code.** Hooks report every session: waiting (LED blinks orange), running with the current tool, done, or failing three times in a row. A permission prompt opens a card on the deck: tap DENY, hold ALLOW or ALWAYS for one second. If you do not answer within 25 seconds, Claude Code asks on the PC as usual. Two more tabs show today's tokens, the cost at API rates, the current 5-hour window against your own peak, top projects and replies per hour. See [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md).
 
-The first control page contains six buttons by default (this fork adds two more pages, 18 buttons in total):
+**Notifications.** iPhone notifications over Bluetooth (Apple ANCS) and Windows toasts (Teams, Outlook, Zalo, Phone Link, ...) over Wi-Fi. Vietnamese text keeps its diacritics. Per-app filters, quiet hours, and a switch that hides message text.
 
-| Button | Default action |
+**Info.** Vietnamese gold prices, crypto (CoinGecko), the Vietnamese stock market (VN-Index, VN30, HNX and your watchlist), weather (Open-Meteo), and a month calendar with lunar dates and Vietnamese holidays, all computed or fetched by the bridge with no API keys.
+
+**Health.** Minutes at the PC per hour and for the last 7 days, the current sitting session, breaks and a late-night warning. A STAND UP card after 50 minutes without a break and a 20-second REST YOUR EYES card every 20 minutes. See [docs/HEALTH.md](docs/HEALTH.md).
+
+**Auto-lock.** The deck watches the Bluetooth signal of your paired iPhone. When the phone leaves and nobody touches the PC, Windows locks.
+
+**Standby clock.** After a while without a touch the deck turns into a large clock with the date, lunar date, upcoming holiday and weather.
+
+**ARAM screen.** During a League of Legends ARAM game, a companion app on the PC sends the champion, augment offers and item suggestions; the deck opens a dedicated screen and goes back when the game ends.
+
+**USB or Wi-Fi.** With a data cable the deck talks over USB. Without one, power it from any 5 V charger and it links to the bridge over your Wi-Fi with signed packets (about 60 ms round trip). See [docs/WIFI_LINK.md](docs/WIFI_LINK.md).
+
+## Hardware
+
+| | |
 | --- | --- |
-| ChatGPT | Open `https://chatgpt.com/` |
-| Ollama | Check local Ollama and start it when needed |
-| Voice Server | Start a local voice-server script after you set its path |
-| Terminal | Open the platform terminal |
-| Task Manager | Open the platform system monitor |
-| Lock PC | Lock or sleep the current session |
+| Board | ESP32-2432S028 "Cheap Yellow Display", the version with USB-C and micro-USB |
+| Screen | 2.8-inch 320x240 ST7789, XPT2046 resistive touch |
+| Extras used | RGB LED, Wi-Fi, Bluetooth LE |
+| PlatformIO environment | `cyd_2usb` |
 
-All labels and actions are configured in `host/config.json`. The example configuration is safe to publish and uses placeholder paths for local scripts.
-
-## How it works
-
-```text
-PC
-- reads CPU, RAM, GPU, network and disk data
-- optionally reads sensors from LibreHardwareMonitor
-- sends telemetry over USB serial
-- executes trusted local actions from config.json
-
-USB serial through CH340
-
-ESP32 display
-- shows live PC statistics
-- shows up to 18 touch buttons on three pages
-- sends only a numeric macro ID back to the PC
-```
-
-The board uses a classic ESP32-WROOM-32 and a CH340 USB-to-UART bridge. It does not expose native USB HID keyboard support through the USB-C port. Keyboard-like actions are handled by the local host bridge after the ESP32 sends a macro ID.
-
-## Target hardware
-
-This project was created for this device:
-
-```text
-Elecrow 2 PACK 2.8inch ESP32 Solo Miner LCD Display Cryptocurrency Solo Miner with 1000KH/s Hashrate
-```
-
-Product page:
-
-```text
-https://www.elecrow.com/2-8inch-esp32-miner-lcd-display-2pcs-cryptocurrency-solo-miner-with-1000kh-s-hashrate.html
-```
-
-Tested hardware summary:
-
-- 2.8-inch ESP32 miner-style LCD display
-- ESP32-WROOM-32-N4 module
-- 320x240 ILI9341V TFT
-- XPT2046 resistive touch controller
-- CH340 USB serial bridge
-
-The pinout matches the hardware used in the CrowPanel Pocket Arcade project:
-
-```text
-https://github.com/lepczynski-cloud/crowpanel-pocket-arcade
-```
-
-See `docs/HARDWARE.md` for pinout details.
-
-## ESP32-2432S028 "Cheap Yellow Display" (this fork)
-
-This fork adds a PlatformIO environment for the 2.8-inch ESP32-2432S028 board sold with both a USB-C and a micro-USB port. That revision differs from the Elecrow board:
-
-| | Elecrow (`esp32_pc_control_deck`) | CYD 2-USB (`cyd_2usb`) |
-| --- | --- | --- |
-| Display | ILI9341 | ST7789, BGR |
-| TFT MISO | GPIO 4 | GPIO 12 |
-| Backlight | GPIO 27 | GPIO 21 |
-| Touch | XPT2046 on the display SPI bus, 4-corner calibration | XPT2046 on its own bus (CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36), fixed mapping |
-| RGB LED | not used | GPIO 4 / 16 / 17, status light |
-
-Build and flash:
-
-```bash
-pio run -e cyd_2usb
-pio run -e cyd_2usb -t upload --upload-port COMx
-```
-
-Stop the host bridge before flashing; it keeps the serial port open.
-
-Additions in this fork (both environments unless noted):
-
-- **18 buttons on 3 control pages.** Macro IDs 1-6 are page 1, 7-12 page 2, 13-18 page 3. Empty slots are not drawn.
-- **Hold to confirm.** A macro with `"confirm_hold": true` shows `HOLD` and runs only after the finger stays on it for one second while a bar fills. Use it for actions such as Lock PC.
-- **Gold prices.** The bridge fetches Vietnamese gold prices from `https://www.vang.today/api/prices` every 15 minutes and shows up to six products in thousand VND per chi (1 luong = 10 chi), with the daily change and the world XAU/USD price. Configure the `gold` section in `host/config.json`.
-- **Touch filter** (`cyd_2usb`). A press must reach a minimum pressure and stay still for 40 ms, which removes phantom presses on the resistive panel.
-- **Status LED** (`cyd_2usb`). Blue: waiting for the PC. Green: live data. Red: data older than 15 s. Cyan flash: button pressed. Blue flash: new notification.
-
-On the Elecrow build the footer has five tabs (`MONITOR`, three macro pages, `INFO`). The `cyd_2usb` build uses UI v2 below.
-
-### UI v3 (`cyd_2usb`)
-
-- **Dark launcher.** Home is a 4×2 launcher of gradient app icons (Monitor, Controls, Info, Claude, AI Tools, AI GPU, Notify, Settings) under a status bar with the PC date, time and Wi-Fi / Bluetooth / USB state, and a footer showing the PC, iPhone and Wi-Fi links. Every other screen has a slim header with a rounded Home button. Dark palette, light text, English labels.
-- **Controls.** Three pages switched with the ‹ › arrows; page dots in the header. Each macro is a gradient icon with its label below; set `"icon"` and `"color"` per macro (see `docs/MACROS.md`).
-- **Info.** Five tabs: **Gold** (vang.today, thousand VND per chi), **Coin** (CoinGecko, USD and 24h change), **Stock** (VN-Index with an intraday sparkline, VN30, HNX-Index and a watchlist, from VPS's public price board API), **Weather** (Open-Meteo, current and 4 days) and **Calendar** (month view with Vietnamese lunar dates, computed on the device). Configure `coins`, `stocks` and `weather` in `host/config.json`:
-
-  ```json
-  "coins": ["bitcoin", "ethereum", "binancecoin", "solana", "ripple"],
-  "stocks": ["VNM", "HPG"],
-  "weather": {"city": "Da Nang", "latitude": 16.0544, "longitude": 108.2022}
-  ```
-
-  Coins refresh every 5 minutes, stocks every 2 minutes during trading hours (30 minutes otherwise), weather every 30 minutes. The VPS endpoints are unofficial and may change; the Stock tab then shows "No data yet" while the other tabs keep working.
-- **Notifications.** The NOTIFY screen lists the newest notifications with their source (phone or PC); a 2.5 s banner appears on other screens (tap it to open the list). `HIDE` replaces message text with "Content hidden". Vietnamese text keeps its diacritics (unifont Vietnamese font); emoji are dropped.
-- **Claude Code, AI Tools, AI GPU, Settings** are placeholders for a later phase.
-
-### iPhone notifications (Bluetooth)
-
-The `cyd_2usb` build advertises as **ESP32 Deck** and reads iPhone notifications through Apple's ANCS. Pair once:
-
-1. On the iPhone open **Settings → Bluetooth** and tap **ESP32 Deck**. If it is not listed, connect from a BLE app such as nRF Connect.
-2. Accept the pairing request and **Allow** the device to show notifications.
-3. The PHONE chip on the NOTIFY screen turns green. The pairing is remembered; the iPhone reconnects by itself when in range.
-
-iOS decides which notifications are shared: every app with notifications enabled on the iPhone. Message previews follow the iPhone's *Show Previews* setting.
-
-### PC notifications (Wi-Fi)
-
-The bridge forwards every Windows toast (Teams, Outlook, Zalo, Phone Link…) to the device.
-
-1. Add your network to the local, git-ignored `host/config.json`:
-
-   ```json
-   "wifi": {"ssid": "<your network>", "password": "<your password>"},
-   "notifications": {"enabled": true, "udp_port": 4210, "token": ""}
-   ```
-
-2. Start the bridge. It generates a random `token` on first run, saves it in `config.json`, and sends Wi-Fi settings and token to the device over USB. The device stores them in its own flash; nothing is compiled into the firmware.
-3. When the device reports its Wi-Fi address, toasts go over UDP; until then they go over USB. Datagrams without the right token are dropped.
-
-Requires the `winrt-*` packages in `host/requirements.txt` (installed by `run_windows.bat`). If Windows refuses notification access, the bridge logs "PC notifications unavailable" and phone notifications keep working.
-
-**Privacy:** the bridge never logs Wi-Fi credentials, the token or notification text, and the device keeps notifications only in RAM (newest 10, cleared on reboot).
-
-## Repository layout
-
-```text
-README.md
-CHANGELOG.md
-LICENSE
-SECURITY.md
-platformio.ini
-src/main.cpp
-host/config.example.json
-host/control_deck_bridge.py
-host/run_windows.bat
-host/run_linux_macos.sh
-host/install_autostart_windows.ps1
-host/uninstall_autostart_windows.ps1
-host/tests/test_bridge.py
-docs/HARDWARE.md
-docs/LINUX_MACOS.md
-docs/MACROS.md
-docs/PROTOCOL.md
-docs/TEMPERATURES.md
-docs/PUBLISHING.md
-docs/media/ESP32_PC_Control_Deck.jpg
-docs/media/control-deck-demo.gif
-docs/media/README.md
-```
+A second environment, `esp32_pc_control_deck`, builds the simpler monitor + macros layout for 2.8-inch ILI9341 ESP32 boards. Pinouts are in [docs/HARDWARE.md](docs/HARDWARE.md).
 
 ## Quick start
 
-### 1. Flash the firmware
-
-Open the repository in CLion with PlatformIO and run:
+### 1. Flash the deck
 
 ```bash
-pio run -e esp32_pc_control_deck
-pio run -t upload -e esp32_pc_control_deck
+pio run -e cyd_2usb -t upload --upload-port COM4
 ```
 
-On first boot, follow the touch calibration on the display. The calibration is saved in ESP32 preferences.
+Use your board's port. Stop the bridge first; it keeps the serial port open.
 
-The same firmware and serial protocol are used on all supported operating systems. If the display already works on Windows with firmware 0.3.3, it does not need to be flashed again for host bridge 0.4.0.
+### 2. Start the bridge
 
-### 2A. Start the host bridge on Windows
-
-Run:
+Windows:
 
 ```text
 host\run_windows.bat
 ```
 
-On the first run, the script creates a virtual environment, installs Python dependencies, copies `config.example.json` to `config.json`, and starts the bridge.
+The first run creates `host/.venv`, installs the dependencies, copies `host/config.example.json` to `host/config.json` and starts the bridge. macOS and Linux: `sh host/run_linux_macos.sh` (see [docs/LINUX_MACOS.md](docs/LINUX_MACOS.md)).
 
-If several CH340 serial devices are connected, set the port manually in `host/config.json`:
-
-```json
-{
-  "serial_port": "COM7"
-}
-```
-
-The Windows launcher and Windows actions are unchanged in version 0.4.0.
-
-### 2B. Start the host bridge on macOS or Linux
-
-Run these commands from the extracted repository directory:
-
-```bash
-chmod +x host/run_linux_macos.sh
-./host/run_linux_macos.sh
-```
-
-You can also run the shell script without changing its executable bit:
-
-```bash
-sh host/run_linux_macos.sh
-```
-
-Do not run the `.sh` file through Python. `run_linux_macos.sh` is a shell script, not a Python program.
-
-On the first run, the launcher checks Python, creates `host/.venv`, installs the dependencies, creates `host/config.json` and starts the bridge. Later runs reuse the same environment.
-
-To inspect the detected USB serial ports without starting the bridge:
-
-```bash
-./host/run_linux_macos.sh --list-ports
-```
-
-If automatic detection does not select the board, set the port manually in `host/config.json`:
+If more than one USB-serial device is plugged in, set the port in `host/config.json`:
 
 ```json
-{
-  "serial_port": "/dev/cu.wchusbserial1420"
-}
+"serial_port": "COM4"
 ```
 
-Typical values are `/dev/cu.wchusbserial*` or `/dev/cu.usbserial*` on macOS and `/dev/ttyUSB0` on Linux. See `docs/LINUX_MACOS.md` for permissions, diagnostics and platform limitations.
+### 3. Set up `host/config.json`
 
-## Configure the voice-server button
+`host/config.json` is git-ignored and holds everything personal. The main sections:
 
-The public example does not include a private local path. Edit your local ignored file:
+| Section | What it does | Details |
+| --- | --- | --- |
+| `macros` | The 18 buttons: label, icon, colour, action | [docs/MACROS.md](docs/MACROS.md) |
+| `wifi`, `notifications` | Wi-Fi for the deck and the shared token (generated on first run) | below |
+| `coins`, `stocks`, `weather`, `gold` | What the Info tabs show | `config.example.json` |
+| `claude` | Claude Code relay, answer timeout, usage tab | [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md) |
+| `activity` | Reminders and auto-lock | [docs/HEALTH.md](docs/HEALTH.md) |
+| `wifi_link` | Wi-Fi link when USB is unplugged | [docs/WIFI_LINK.md](docs/WIFI_LINK.md) |
+| `librehardwaremonitor` | Extra temperatures from LibreHardwareMonitor | [docs/TEMPERATURES.md](docs/TEMPERATURES.md) |
 
-```text
-host/config.json
-```
-
-Change the Voice Server command and working directory to your real local script path.
-
-Example for Windows:
+Wi-Fi and PC notifications:
 
 ```json
-{
-  "id": 3,
-  "label": "Voice Server",
-  "action": "command",
-  "new_console": true,
-  "value": {
-    "windows": ["cmd.exe", "/c", "C:\\Path\\To\\START_VOICE_SERVER.cmd"]
-  },
-  "working_directory": {
-    "windows": "C:\\Path\\To"
-  }
-}
+"wifi": {"ssid": "<your network>", "password": "<your password>"},
+"notifications": {"enabled": true, "udp_port": 4210, "token": ""}
 ```
 
-Do not commit your local `host/config.json` if it contains private paths or secrets. It is ignored by default.
+The bridge sends the Wi-Fi settings and the token to the deck over USB once; the deck keeps them in its own flash.
 
-## Ollama button
+### 4. Pair your iPhone
 
-The Ollama button checks:
+On the iPhone open **Settings > Bluetooth**, tap **ESP32 Deck**, accept the pairing and allow notifications. The iPhone reconnects by itself when it is in range.
 
-```text
-http://127.0.0.1:11434/api/tags
+### 5. Claude Code (optional)
+
+```powershell
+host\.venv\Scripts\python.exe host\install_claude_hooks.py
 ```
 
-If Ollama already responds, the bridge does not start a duplicate process. If it is not running, it starts:
+Adds the deck's hooks to `~/.claude/settings.json` (a backup is written first). Restart your Claude Code sessions.
 
-```text
-ollama serve
-```
-
-## Temperatures
-
-Windows usually does not expose CPU temperature through `psutil`. For more sensors, run LibreHardwareMonitor and enable:
-
-```text
-Options -> Remote Web Server -> Run
-```
-
-The bridge reads:
-
-```text
-http://127.0.0.1:8085/data.json
-```
-
-To list detected temperature sensors:
-
-```text
-host\.venv\Scripts\python.exe host\control_deck_bridge.py --list-temperatures --config host\config.json
-```
-
-If no CPU temperature is available, the display uses a clear fallback:
-
-- CPU row: `TEMP N/A` or `SYS xxC`
-- RAM row: used/total memory
-- GPU row: GPU temperature or `TEMP N/A`
-- VRAM row: used/total memory
-- Disk box: read/write activity and optional disk temperature
-
-LibreHardwareMonitor is enabled by default only on Windows. Linux uses temperatures exposed by `psutil` when the operating system provides them. macOS usually reports CPU temperature as unavailable without an additional privileged sensor tool, which this project does not require.
-
-## Start automatically with Windows
-
-Run `host/run_windows.bat` once, then execute from the repository root:
+### 6. Start with Windows (optional)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\host\install_autostart_windows.ps1
 ```
 
-Remove the startup shortcut with:
+`host\uninstall_autostart_windows.ps1` removes it again.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\host\uninstall_autostart_windows.ps1
+## Documentation
+
+| | |
+| --- | --- |
+| [CLAUDE_CODE.md](docs/CLAUDE_CODE.md) | Session status, permission prompts, usage and stats |
+| [HEALTH.md](docs/HEALTH.md) | Time at the PC, break reminders, auto-lock |
+| [WIFI_LINK.md](docs/WIFI_LINK.md) | Running the deck without a USB data cable |
+| [MACROS.md](docs/MACROS.md) | Button actions, icons and colours |
+| [TEMPERATURES.md](docs/TEMPERATURES.md) | CPU and GPU temperatures on Windows |
+| [LINUX_MACOS.md](docs/LINUX_MACOS.md) | The bridge on Linux and macOS |
+| [HARDWARE.md](docs/HARDWARE.md) | Boards and pinouts |
+| [PROTOCOL.md](docs/PROTOCOL.md) | Every frame between the bridge and the deck |
+| [CHANGELOG.md](CHANGELOG.md) | What changed |
+
+## Privacy and security
+
+- Everything stays on your PC and your local network. The bridge listens on localhost (Claude Code relay) and on your LAN only for the deck's signed packets.
+- The deck stores no passwords or accounts besides the Wi-Fi credentials you give it over USB. It keeps notifications in RAM only (newest 10, cleared on reboot).
+- The deck sends a button number, never a command; the bridge only runs actions from your local `host/config.json`.
+- Claude Code hooks forward the session, tool and a short target (command, file name), never prompts, transcripts or file contents. Usage counts read only token numbers from Claude Code's local logs.
+- Personal data stays in git-ignored files: `host/config.json`, `host/device_state.json`, `host/claude_stats.json`, `host/activity_state.json`.
+
+More in [SECURITY.md](SECURITY.md).
+
+## Development
+
+```bash
+host/.venv/Scripts/python.exe -m pytest host/tests      # bridge
+pio test -e cyd_2usb --upload-port COM4 --test-port COM4 # firmware, on the board
+pio run -e esp32_pc_control_deck                         # second board still builds
 ```
 
-## Serial protocol
-
-The protocol uses newline-delimited JSON frames prefixed with `DD:`.
-
-Example:
-
-```text
-DD:{"type":"stats","cpu":18.2,"ram":61.7}
-```
-
-The prefix prevents ESP32 boot messages from being parsed as application JSON. See `docs/PROTOCOL.md` for details.
-
-## Security notes
-
-- The ESP32 stores no passwords, browser cookies, API keys or account credentials.
-- The ESP32 sends only a macro ID from 1 to 18.
-- The host bridge executes only actions configured locally in `host/config.json`.
-- Keep `host/config.json` out of Git if it contains local paths or private commands.
-
-See `SECURITY.md` for more details.
+`tools/deck_screenshot.py` captures screens from a connected deck with made-up sample data (it produced the images above).
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).

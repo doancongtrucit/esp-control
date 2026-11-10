@@ -175,7 +175,7 @@ TEST_ASSERT_EQUAL(40u, utf8Length(sanitizeVi(String(300, 'x'), 40)));
 ### Task 8: Docs, hand-off and release
 
 **Files:**
-- Modify: `README.md` (fork section: UI v2, iPhone pairing steps, Wi-Fi provisioning, privacy), `docs/PROTOCOL.md`, `docs/MACROS.md` (`icon` field), `CHANGELOG.md`
+- Modify: `README.md` (UI v2, iPhone pairing steps, Wi-Fi provisioning, privacy), `docs/PROTOCOL.md`, `docs/MACROS.md` (`icon` field), `CHANGELOG.md`
 
 - [ ] **Step 1:** Update docs; README pairing steps: Settings → Bluetooth → "ESP32 Deck" (or nRF Connect) → allow notifications.
 - [ ] **Step 2:** Full verification: `pio run` both envs, `pytest -q host/tests`, flash, run the Review Focus list by hand, heap after 30 min ≥ 100 KB free.

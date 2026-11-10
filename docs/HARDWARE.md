@@ -1,51 +1,37 @@
-# Hardware notes
+# Hardware
 
-ESP32 PC Control Deck targets the Elecrow 2.8-inch ESP32 Solo Miner LCD Display based on the classic ESP32-WROOM-32 module. The project was created for the product sold as `2 PACK 2.8inch ESP32 Solo Miner LCD Display Cryptocurrency Solo Miner with 1000KH/s Hashrate`.
+ESP Control Deck runs on 2.8-inch 320x240 touch boards built around a classic ESP32-WROOM-32 and a CH340 USB-to-UART bridge. The main target is the **ESP32-2432S028 "Cheap Yellow Display" with two USB ports** (USB-C and micro-USB), PlatformIO environment `cyd_2usb`.
 
-Product page:
-
-```text
-https://www.elecrow.com/2-8inch-esp32-miner-lcd-display-2pcs-cryptocurrency-solo-miner-with-1000kh-s-hashrate.html
-```
-
-The tested board behaves like a USB serial device through a CH340 bridge and works with the pinout below.
-
-## Display and touch pinout
-
-The PlatformIO configuration matches the working pinout used by the CrowPanel Pocket Arcade project on the same board:
+## ESP32-2432S028, two USB ports (`cyd_2usb`)
 
 | Function | GPIO |
 | --- | ---: |
-| TFT MISO | 4 |
-| TFT MOSI | 13 |
-| TFT SCLK | 14 |
-| TFT CS | 15 |
-| TFT DC | 2 |
-| TFT RST | -1 |
+| TFT MOSI / SCLK / CS / DC | 13 / 14 / 15 / 2 |
+| TFT MISO | 12 |
+| Backlight | 21 |
+| Touch CLK / MOSI / MISO / CS / IRQ | 25 / 32 / 39 / 33 / 36 |
+| RGB LED R / G / B | 4 / 16 / 17 |
+
+- Display: ST7789 with BGR colour order. Touch: XPT2046 on its own SPI bus with a fixed raw-to-screen mapping (no calibration screen).
+- `DECK_ROTATION` in `platformio.ini` turns picture and touch by 180 degrees for either cable side; Settings > Display > Flip 180 does the same at run time.
+- Radios: Wi-Fi (PC notifications, the Wi-Fi link, ARAM) and Bluetooth LE (iPhone notifications, auto-lock) run together; the firmware lets Wi-Fi take the radio first.
+- Flash: 4 MB with the `huge_app` partition table (3 MB app, no OTA slot), so firmware updates go over USB.
+
+Optional add-ons that fit the free pins: an I2S microphone (INMP441) and a small speaker on the board's speaker connector.
+
+## 2.8-inch ILI9341 board (`esp32_pc_control_deck`)
+
+A second environment builds the simpler monitor + macros layout for 2.8-inch ESP32 boards with an ILI9341 panel and the touch controller on the display bus.
+
+| Function | GPIO |
+| --- | ---: |
+| TFT MISO / MOSI / SCLK | 4 / 13 / 14 |
+| TFT CS / DC / RST | 15 / 2 / -1 |
 | Backlight | 27 |
 | Touch CS | 33 |
 
-The display uses ILI9341 and the resistive touch controller uses XPT2046.
+The touch panel is calibrated on first boot (four corners) and the result is kept in the ESP32's preferences.
 
-## Orientation
+## USB
 
-The firmware uses landscape rotation:
-
-```cpp
-tft.setRotation(1);
-```
-
-This produces a 320x240 interface with the USB connector on the right side of the tested device.
-
-## USB behavior
-
-The board uses a classic ESP32-WROOM-32 and a CH340 USB-to-UART bridge. The USB-C connection provides:
-
-- power,
-- firmware upload,
-- serial PC telemetry,
-- serial touch-control events.
-
-It does not expose the ESP32 as a native USB HID keyboard. The local host bridge receives a small macro ID from the ESP32 and performs the configured action on the computer.
-
-A future hardware version could add an RP2040 or another native-USB microcontroller for true HID operation without the host bridge.
+The CH340 bridge gives power, firmware upload and the serial link to the PC. It is not a USB keyboard: the deck sends a macro number and the bridge on the PC performs the configured action. Without a data cable the deck can run from any 5 V charger and talk to the bridge over Wi-Fi (see [WIFI_LINK.md](WIFI_LINK.md)).

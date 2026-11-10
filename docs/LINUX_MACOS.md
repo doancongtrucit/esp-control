@@ -1,8 +1,6 @@
 # macOS and Linux host bridge
 
-Version 0.4.0 adds an officially documented macOS and Linux launcher path while keeping the Windows launcher and Windows actions unchanged.
-
-The ESP32 firmware does not need a platform-specific build. The same USB serial protocol is used on Windows, macOS and Linux. An existing display running firmware 0.3.3 with protocol 3 is compatible with host bridge 0.4.0.
+The bridge also runs on macOS and Linux with its own launcher. The firmware is the same on every platform: the deck speaks the same protocol to any host. Windows-only parts (toast notifications, LibreHardwareMonitor temperatures, window focus for Claude Code, auto-lock) are skipped elsewhere.
 
 ## Correct way to start it
 

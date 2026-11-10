@@ -101,7 +101,7 @@ Examples:
   "id": 5,
   "label": "Signature",
   "action": "text",
-  "value": "Hello from ESP32 PC Control Deck"
+  "value": "Hello from ESP Control Deck"
 }
 ```
 

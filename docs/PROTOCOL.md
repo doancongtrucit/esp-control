@@ -1,6 +1,6 @@
 # USB serial protocol
 
-ESP32 PC Control Deck v0.3 uses a small line-oriented protocol through the board's CH340 USB serial connection.
+ESP Control Deck uses a small line-oriented protocol through the board's CH340 USB serial connection (or the Wi-Fi link, see below).
 
 ## Framing
 
@@ -204,8 +204,8 @@ Sent after boot:
 ```json
 {
   "type": "hello",
-  "device": "ESP32 PC Control Deck",
-  "firmware": "0.3.3",
+  "device": "ESP Control Deck",
+  "firmware": "0.4.0",
   "protocol": 3
 }
 ```

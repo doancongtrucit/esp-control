@@ -1,15 +1,9 @@
-# Media files
+# Media
 
-The root README embeds these files directly:
+`screens/` holds screenshots taken from a real deck with `tools/deck_screenshot.py` and the made-up sample data in that tool (no personal data). Regenerate them after a UI change:
 
-- `ESP32_PC_Control_Deck.jpg` - main project photo shown near the top of the README
-- `control-deck-demo.gif` - short loop shown in the Demo section
+```bash
+python tools/deck_screenshot.py --port COM4 --out docs/media/screens home monitor controls:0 info:0 info:5 claude:0 claude:3 notify settings:0 break:0
+```
 
-Keep the exact filenames and capitalization. GitHub paths are case-sensitive.
-
-Replace the included placeholder files with real project media before publishing the final README.
-
-Recommended sizes:
-
-- JPG: 1280x720 or 1600x900
-- GIF: short loop, ideally under 10 MB
+Stop the bridge first; it keeps the serial port open.

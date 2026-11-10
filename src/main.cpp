@@ -1763,7 +1763,7 @@ void setup() {
 
   JsonDocument hello;
   hello["type"] = "hello";
-  hello["device"] = "ESP32 PC Control Deck";
+  hello["device"] = "ESP Control Deck";
   hello["firmware"] = FIRMWARE_VERSION;
   hello["protocol"] = PROTOCOL_VERSION;
   sendFrame(hello);

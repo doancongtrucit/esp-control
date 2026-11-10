@@ -2,7 +2,7 @@
 
 Issues and specs for this repo live as GitHub issues in **doancongtrucit/esp-control**. Use the `gh` CLI for all operations.
 
-**Always pass `--repo doancongtrucit/esp-control`** (or use `repos/doancongtrucit/esp-control/...` in `gh api`). This clone has two remotes: `mine` is ours, `origin` is the upstream lepczynski-cloud/ESP32-PC-Control-Deck, and `gh` must never create issues, labels or comments there.
+**Always pass `--repo doancongtrucit/esp-control`** (or use `repos/doancongtrucit/esp-control/...` in `gh api`). This clone has two remotes: `mine` is ours, `origin` is another project's repository, and `gh` must never create issues, labels or comments there.
 
 **Privacy:** issues are public. Never put personal data, company data, secrets, Wi-Fi details, phone notification contents or screenshots of real notifications in an issue, comment or label.
 
@@ -16,7 +16,7 @@ Issues and specs for this repo live as GitHub issues in **doancongtrucit/esp-con
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-Do not rely on `gh` inferring the repo from `git remote -v`: it may pick the upstream `origin`.
+Do not rely on `gh` inferring the repo from `git remote -v`: it may pick `origin`.
 
 ## Pull requests as a triage surface
 

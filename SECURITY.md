@@ -2,37 +2,38 @@
 
 ## Local-first design
 
-ESP32 PC Control Deck is intentionally local-first:
+ESP Control Deck needs no cloud service and no account:
 
-- no Wi-Fi is required,
-- no Bluetooth is required,
-- no cloud service is required by the bridge,
-- no API key, password, browser cookie, or account credential is stored on the ESP32,
-- telemetry and touch events use the USB serial connection.
+- the bridge talks to the deck over USB, or over your local network with signed packets (see [docs/WIFI_LINK.md](docs/WIFI_LINK.md));
+- the Claude Code relay listens on `127.0.0.1` only;
+- the only Internet requests are the public feeds of the Info tabs (gold, coin, stock, weather) and NTP on the deck;
+- the deck stores the Wi-Fi credentials and the shared token it got over USB, nothing else (no API keys, passwords or cookies).
 
 ## Action execution
 
-The ESP32 sends only a numeric macro ID from 1 to 18. It does not send a command path or arbitrary shell text.
+The deck sends only a button number from 1 to 18, never a command or shell text. The bridge maps the number to an action in your local `host/config.json`, which can open URLs, run commands, start services, type text and send hotkeys.
 
-The host bridge maps the ID to an action in the local `host/config.json` file. That file can open URLs, execute commands, start services, type text, and send hotkeys.
-
-Treat `host/config.json` as executable local configuration:
+Treat `host/config.json` as executable configuration:
 
 - add only commands you trust,
-- verify paths before enabling autostart,
-- do not commit private local paths or secrets unless intentionally public,
-- do not use configuration files from unknown sources,
-- keep `host/config.json` out of Git; it is ignored by default.
+- check paths before enabling autostart,
+- never use configuration files from unknown sources,
+- keep it out of Git (ignored by default).
+
+## Wi-Fi traffic
+
+- Deck commands (macros, Claude answers, auto-lock and reminder settings) are signed with HMAC-SHA256 and the shared token, carry a timestamp and a sequence number, and are dropped when forged, stale or replayed.
+- Frames are signed, not encrypted: someone on the same network can read what is shown on the deck (stats, Claude session names, notification text). Turn `wifi_link` off on networks you do not trust; the deck's "Hide content" switch keeps message text off the screen.
+- The Wi-Fi password is sent to the deck over USB only.
+
+## Claude Code hooks
+
+The permission hook never allows anything by itself: without an answer from the deck it returns nothing and Claude Code asks on the PC. Your `deny` and `ask` rules still apply after an Allow from the deck. Hooks forward the session id, folder name, event, tool and a short target only.
 
 ## Local HTTP checks
 
-The default configuration can make read-only requests to:
-
-- LibreHardwareMonitor at `http://127.0.0.1:8085/data.json` on Windows,
-- Ollama at `http://127.0.0.1:11434/api/tags` when the Ollama button is used.
-
-Do not change these to untrusted remote endpoints without understanding the privacy and network implications.
+The default configuration makes read-only requests to LibreHardwareMonitor (`http://127.0.0.1:8085/data.json`, Windows) and Ollama (`http://127.0.0.1:11434/api/tags`, when the Ollama button is used). Do not point these at remote endpoints without thinking about privacy.
 
 ## Reporting a vulnerability
 
-Use GitHub private vulnerability reporting for security issues. Avoid publishing exploit details in a public issue before a fix is available.
+Use GitHub private vulnerability reporting. Please do not publish exploit details in a public issue before a fix is available.
