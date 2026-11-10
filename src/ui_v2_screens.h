@@ -1233,7 +1233,8 @@ void drawConnectValues() {
   drawValueRow(1, "Address", pcLinkUp ? netIp() + ":" + String(netPort()) : String("-"));
   drawValueRow(2, "iPhone", ancsReady() ? "Ready" : (ancsConnected() ? "Pairing..." : "Waiting"),
                ancsReady() ? T_UP : T_MUTED);
-  drawValueRow(3, "PC (USB)", usbLive() ? "Online" : "Offline", usbLive() ? T_UP : T_DOWN);
+  const char *link = !usbLive() ? "Offline" : (serialHostActive() ? "USB" : (wifiLinkActive() ? "Wi-Fi" : "Online"));
+  drawValueRow(3, "PC link", link, usbLive() ? T_UP : T_DOWN);
 }
 
 void drawDeviceValues() {

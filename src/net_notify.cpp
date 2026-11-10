@@ -18,6 +18,7 @@ bool parseUdpNotify(const char *payload, const String &token, String &app, Strin
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_coexist.h>
 
 #include "aram.h"
 
@@ -33,6 +34,9 @@ bool udpOpen = false;
 bool attempted = false;
 uint32_t lastAttemptMs = 0;
 uint32_t rejected = 0;
+LinkHandler linkHandler = nullptr;
+bool ntpStarted = false;
+constexpr size_t UDP_READ_MAX = 1500;
 
 void load() {
   Preferences prefs;
@@ -54,6 +58,8 @@ void save() {
   prefs.end();
 }
 
+void handlePlainPacket(const char *buffer);
+
 void connect() {
   attempted = true;
   lastAttemptMs = millis();
@@ -68,6 +74,8 @@ void netBegin(NetHandler onNotify, AramHandler onAram) {
   load();
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(true);  // required while BLE is running
+  // Wi-Fi and BLE share one radio; favour Wi-Fi so the PC link stays responsive (ANCS needs little air time).
+  esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
   // netLoop owns retries (every RETRY_MS); the core's auto-reconnect would
   // retry a wrong password back to back and starve BLE.
   WiFi.setAutoReconnect(false);
@@ -98,17 +106,36 @@ void netLoop() {
     return;
   }
   if (!udpOpen) udpOpen = udp.begin(settings.port);
-
-  const int size = udp.parsePacket();
-  if (size <= 0) return;
-  if (static_cast<size_t>(size) > UDP_NOTIFY_MAX) {
-    udp.flush();
-    ++rejected;
-    return;
+  if (!ntpStarted) {  // UTC; the bridge sends the UTC offset, and the clock runs without the PC
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    ntpStarted = true;
   }
-  char buffer[UDP_NOTIFY_MAX + 1];
-  const int n = udp.read(buffer, UDP_NOTIFY_MAX);
-  buffer[max(n, 0)] = '\0';
+
+  for (int packets = 0; packets < 8; ++packets) {  // a long frame arrives as a few datagrams
+    const int size = udp.parsePacket();
+    if (size <= 0) return;
+    if (static_cast<size_t>(size) > UDP_READ_MAX) {
+      udp.flush();
+      ++rejected;
+      continue;
+    }
+    static char buffer[UDP_READ_MAX + 1];
+    const int n = udp.read(buffer, UDP_READ_MAX);
+    buffer[max(n, 0)] = '\0';
+    if (n >= 4 && memcmp(buffer, "DK1 ", 4) == 0) {
+      if (linkHandler) linkHandler(buffer, n, udp.remoteIP(), udp.remotePort());
+      continue;
+    }
+    if (static_cast<size_t>(n) > UDP_NOTIFY_MAX) {
+      ++rejected;
+      continue;
+    }
+    handlePlainPacket(buffer);
+  }
+}
+
+namespace {
+void handlePlainPacket(const char *buffer) {
   // ARAM packets first: the notification parser accepts any JSON with the right token.
   if (aramHandler) {
     AramData aram;
@@ -124,12 +151,24 @@ void netLoop() {
   }
   if (handler) handler(app, from, body);
 }
+}  // namespace
 
 bool netConnected() { return settings.ssid.length() && WiFi.status() == WL_CONNECTED; }
 String netIp() { return netConnected() ? WiFi.localIP().toString() : String(); }
 uint16_t netPort() { return settings.port; }
 uint32_t netRejectedCount() { return rejected; }
 int netRssi() { return netConnected() ? WiFi.RSSI() : 0; }
+
+void netSetLinkHandler(LinkHandler h) { linkHandler = h; }
+
+bool netSendTo(const IPAddress &ip, uint16_t port, const char *data, size_t len) {
+  if (!udpOpen || !netConnected()) return false;
+  if (!udp.beginPacket(ip, port)) return false;
+  udp.write(reinterpret_cast<const uint8_t *>(data), len);
+  return udp.endPacket();
+}
+
+const String &netToken() { return settings.token; }
 
 void netForget() {
   Preferences prefs;

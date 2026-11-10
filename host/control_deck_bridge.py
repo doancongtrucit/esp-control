@@ -668,6 +668,9 @@ def get_stats(
         "clock": now.strftime("%H:%M"),
         "clock_seconds": clock_seconds,
         "date": now.date().isoformat(),
+        # Unix time and UTC offset: the deck keeps its own clock (and signs Wi-Fi frames) with these.
+        "epoch": int(time.time()),
+        "tz": int(now.astimezone().utcoffset().total_seconds()),
     }
     return payload, current
 
@@ -1004,7 +1007,11 @@ def encode_frame(obj: dict[str, Any]) -> bytes:
     return f"{PROTOCOL_PREFIX}{payload}\n".encode("ascii")
 
 
-def send_json(serial_port: serial.Serial, obj: dict[str, Any]) -> None:
+def send_json(serial_port: Any, obj: dict[str, Any]) -> None:
+    """Writes a frame to the USB port, or hands it to a Wi-Fi link (anything with send_frame)."""
+    if hasattr(serial_port, "send_frame"):
+        serial_port.send_frame(obj)
+        return
     serial_port.write(encode_frame(obj))
     serial_port.flush()
 
@@ -1206,171 +1213,273 @@ def handle_claude_message(relay: Any, message: dict[str, Any]) -> bool:
     return True
 
 
+def read_known_deck_ip() -> str | None:
+    """The deck's last IP from device_state.json, for Wi-Fi probes while USB is unplugged."""
+    if DEVICE_STATE_FILE is None or not DEVICE_STATE_FILE.exists():
+        return None
+    try:
+        return json.loads(DEVICE_STATE_FILE.read_text(encoding="utf-8")).get("ip") or None
+    except (OSError, ValueError):
+        return None
+
+
+def start_udp_hub(config: dict[str, Any]) -> Any:
+    """Wi-Fi link to the deck when USB is unplugged; None when off or without a token."""
+    settings = config.get("wifi_link") or {}
+    token = str(notify_settings(config).get("token", ""))
+    if not settings.get("enabled", True) or not token:
+        return None
+    from udp_link import UdpHub
+
+    try:
+        hub = UdpHub(token, port=int(settings.get("port", 4211)),
+                     deck_port=int(notify_settings(config).get("udp_port", DEFAULT_NOTIFY_PORT)),
+                     known_ip=read_known_deck_ip(), log=log)
+    except OSError as exc:
+        log(f"Wi-Fi link off: cannot open UDP port ({exc})")
+        return None
+    log(f"Wi-Fi link listening on UDP {hub.port}")
+    return hub
+
+
+WIFI_RESEND_S = 15.0  # over UDP a lost frame is replaced by this periodic full refresh
+
+
+def serve_device(
+    link: Any,
+    kind: str,
+    config: dict[str, Any],
+    ctx: dict[str, Any],
+    stop: Any = lambda: False,
+) -> None:
+    """Exchanges frames with the deck over USB (a serial port) or Wi-Fi (a UdpLink) until it fails or stop()."""
+    interval = max(0.5, float(config.get("interval_seconds", 2.0)))
+    disk_path, lhm, info_feed, feeds = ctx["disk_path"], ctx["lhm"], ctx["info_feed"], ctx["feeds"]
+    toasts, claude, claude_usage, activity = ctx["toasts"], ctx["claude"], ctx["claude_usage"], ctx["activity"]
+    usb = kind == "USB"
+    hub = ctx.get("hub")
+
+    send_json(link, macro_packet(config))
+    if usb:
+        send_wifi_provisioning(link, config)  # credentials travel over USB only
+    last_send = 0.0
+    last_full = time.monotonic()
+    sent_info_version = -1
+    sent_feed_versions: dict[str, int] = {}
+    sent_claude_version = -1
+    sent_claude_stats = -1
+    sent_claude_usage = -1
+    sent_activity = -1
+    device_wifi: tuple[str, int] | None = None
+    if not usb and hub is not None and hub.deck is not None:
+        device_wifi = (hub.deck[0], hub.deck_port)
+        write_device_state(device_wifi)  # ARAM Helper keeps finding the deck
+    receive_buffer = bytearray()
+
+    while True:
+        now = time.monotonic()
+        if stop():
+            return
+        if not usb and now - last_full >= WIFI_RESEND_S:
+            last_full = now
+            sent_info_version = -1
+            sent_feed_versions.clear()
+            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = -1
+            send_json(link, macro_packet(config))
+        if now - last_send >= interval:
+            payload, ctx["previous"] = get_stats(ctx["previous"], disk_path, lhm)
+            send_json(link, payload)
+            last_send = now
+
+        info_version, info_packet = info_feed.snapshot()
+        if info_packet is not None and info_version != sent_info_version:
+            send_json(link, info_packet)
+            sent_info_version = info_version
+
+        for feed_kind, (version, frame) in feeds.snapshot().items():
+            if sent_feed_versions.get(feed_kind) != version:
+                send_json(link, frame)
+                sent_feed_versions[feed_kind] = version
+
+        if claude is not None:
+            claude_version, claude_frame = claude.snapshot()
+            if claude_version != sent_claude_version:
+                send_json(link, claude_frame)
+                sent_claude_version = claude_version
+            stats_version, stats_frame = claude.stats_snapshot()
+            if stats_version != sent_claude_stats:
+                send_json(link, stats_frame)
+                sent_claude_stats = stats_version
+        if claude_usage is not None:
+            usage_version, usage_frame = claude_usage.snapshot()
+            if usage_frame is not None and usage_version != sent_claude_usage:
+                send_json(link, usage_frame)
+                sent_claude_usage = usage_version
+        if activity is not None:
+            activity_version, activity_frame = activity.snapshot()
+            if activity_frame is not None and activity_version != sent_activity:
+                send_json(link, activity_frame)
+                sent_activity = activity_version
+
+        forward_pc_toasts(toasts, link, device_wifi if usb else None, config)
+
+        chunk = link.read(256)
+        if chunk:
+            receive_buffer.extend(chunk)
+            while b"\n" in receive_buffer:
+                raw, _, remainder = receive_buffer.partition(b"\n")
+                receive_buffer = bytearray(remainder)
+                text = raw.decode("utf-8", errors="replace").strip()
+                if not text:
+                    continue
+
+                message = parse_frame(text)
+                if message is None:
+                    continue
+
+                message_type = message.get("type")
+                if handle_claude_message(claude, message):
+                    pass
+                elif activity is not None and activity.handle(message):
+                    pass
+                elif message_type == "macro":
+                    execute_macro(config, int(message.get("id", 0)))
+                elif message_type in {"hello", "beacon"}:
+                    if message_type == "hello":
+                        protocol = message.get("protocol", "?")
+                        firmware = message.get("firmware", "?")
+                        log(
+                            f"Connected to {message.get('device', 'ESP32')} "
+                            f"firmware {firmware}, protocol {protocol}"
+                        )
+                        if protocol != PROTOCOL_VERSION:
+                            log(
+                                f"Warning: bridge protocol {PROTOCOL_VERSION} "
+                                f"!= device protocol {protocol}"
+                            )
+                    send_json(link, macro_packet(config))
+                    if usb:
+                        send_wifi_provisioning(link, config)
+                        device_wifi = None
+                    sent_info_version = -1  # device rebooted: resend everything
+                    sent_feed_versions.clear()
+                    sent_claude_version = -1
+                    sent_claude_stats = -1
+                    sent_claude_usage = -1
+                    sent_activity = -1
+                elif message_type == "wifi_status":
+                    if message.get("connected") and message.get("ip"):
+                        device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
+                        if hub is not None:
+                            hub.known_ip = device_wifi[0]
+                        log("Device Wi-Fi connected; PC notifications go over Wi-Fi")
+                    else:
+                        device_wifi = None
+                        log("Device Wi-Fi not connected; PC notifications go over USB")
+                    write_device_state(device_wifi)
+                elif message_type == "error":
+                    log(
+                        f"ESP protocol error: {message.get('code', 'unknown')} "
+                        f"({message.get('detail', '')})"
+                    )
+                elif message_type not in {"pong", "rebooting", "phone"}:
+                    log(f"ESP: {message}")
+
+        if not usb and not link.alive():
+            log("Wi-Fi link to the deck lost")
+            return
+        time.sleep(0.01)
+
+
+def find_serial_port(config: dict[str, Any], state: dict[str, Any]) -> str | None:
+    configured_port = str(config.get("serial_port", "auto"))
+    if configured_port and configured_port.lower() != "auto":
+        # A fixed port that is unplugged counts as missing (then the Wi-Fi link can take over).
+        present = {str(item.device).upper() for item in list_ports.comports()}
+        return configured_port if configured_port.upper() in present else None
+    ports = list(list_ports.comports())
+    port = choose_serial_port(configured_port, ports)
+    if not port and platform.system() != "Windows" and time.monotonic() >= state.get("next_posix_message", 0.0):
+        if ports:
+            log("Visible serial ports: " + ", ".join(str(item.device) for item in ports))
+        else:
+            log("No serial ports are currently visible.")
+        log("Run the launcher with --list-ports for diagnostics.")
+        state["next_posix_message"] = time.monotonic() + 10.0
+    return port
+
+
+def wait_for_wifi_deck(hub: Any, config: dict[str, Any], ctx: dict[str, Any], port_state: dict[str, Any]) -> None:
+    """For about 2 s: look for the deck on Wi-Fi; once linked, serve it until it drops or USB comes back."""
+    from udp_link import UdpLink
+
+    link = UdpLink(hub)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        hub.probe()
+        link.pump()
+        if hub.linked():
+            log("Deck connected over Wi-Fi")
+            next_check = [time.monotonic() + 2.0]
+
+            def usb_back() -> bool:
+                if time.monotonic() < next_check[0]:
+                    return False
+                next_check[0] = time.monotonic() + 2.0
+                return find_serial_port(config, port_state) is not None
+
+            serve_device(link, "Wi-Fi", config, ctx, stop=usb_back)
+            return
+        time.sleep(0.05)
+
+
 def run(config: dict[str, Any]) -> None:
     baud = int(config.get("baud", 115200))
-    interval = max(0.5, float(config.get("interval_seconds", 2.0)))
-    disk_path = disk_path_from_config(config)
-    lhm = build_lhm_reader(config)
     info_feed = InfoFeed(config)
     info_feed.start()
     from info_feeds import InfoFeeds
 
     feeds = InfoFeeds(config, log=log)
     feeds.start()
-    toasts = start_pc_notifications(config)
-    claude = start_claude_relay(config)
-    claude_usage = start_claude_usage(config)
-    activity = start_activity(config)
-
+    ctx: dict[str, Any] = {
+        "disk_path": disk_path_from_config(config),
+        "lhm": build_lhm_reader(config),
+        "info_feed": info_feed,
+        "feeds": feeds,
+        "toasts": start_pc_notifications(config),
+        "claude": start_claude_relay(config),
+        "claude_usage": start_claude_usage(config),
+        "activity": start_activity(config),
+        "hub": start_udp_hub(config),
+    }
     psutil.cpu_percent(interval=None)
-    previous = current_counters()
-    configured_port = str(config.get("serial_port", "auto"))
-    next_posix_port_message = 0.0
+    ctx["previous"] = current_counters()
+    hub = ctx["hub"]
+    port_state: dict[str, Any] = {}
     last_posix_serial_error: tuple[str, str] | None = None
+    next_missing_log = 0.0
 
     while True:
-        if configured_port and configured_port.lower() != "auto":
-            ports: list[Any] = []
-            port = configured_port
-        else:
-            ports = list(list_ports.comports())
-            port = choose_serial_port(configured_port, ports)
+        port = find_serial_port(config, port_state)
         if not port:
-            if platform.system() == "Windows":
-                log("Control Deck CH340 not found. Retrying...")
-            elif time.monotonic() >= next_posix_port_message:
-                log("Control Deck CH340 not found. Retrying...")
-                if ports:
-                    log(
-                        "Visible serial ports: "
-                        + ", ".join(str(item.device) for item in ports)
-                    )
-                else:
-                    log("No serial ports are currently visible.")
-                log("Run the launcher with --list-ports for diagnostics.")
-                next_posix_port_message = time.monotonic() + 10.0
-            time.sleep(2.0)
+            if time.monotonic() >= next_missing_log:
+                log("Control Deck USB not found" + ("; looking for it on Wi-Fi" if hub is not None else ". Retrying..."))
+                next_missing_log = time.monotonic() + 60.0
+            if hub is not None:
+                wait_for_wifi_deck(hub, config, ctx, port_state)
+            else:
+                time.sleep(2.0)
             continue
 
         try:
             log(f"Opening {port} at {baud} baud")
             with serial.Serial(port, baud, timeout=0.05, write_timeout=1) as serial_port:
                 last_posix_serial_error = None
+                next_missing_log = 0.0
                 time.sleep(2.0)
                 serial_port.reset_input_buffer()
                 serial_port.reset_output_buffer()
-
-                send_json(serial_port, macro_packet(config))
-                send_wifi_provisioning(serial_port, config)
-                last_send = 0.0
-                sent_info_version = -1
-                sent_feed_versions: dict[str, int] = {}
-                sent_claude_version = -1
-                sent_claude_stats = -1
-                sent_claude_usage = -1
-                sent_activity = -1
-                device_wifi: tuple[str, int] | None = None
-                receive_buffer = bytearray()
-
-                while True:
-                    now = time.monotonic()
-                    if now - last_send >= interval:
-                        payload, previous = get_stats(previous, disk_path, lhm)
-                        send_json(serial_port, payload)
-                        last_send = now
-
-                    info_version, info_packet = info_feed.snapshot()
-                    if info_packet is not None and info_version != sent_info_version:
-                        send_json(serial_port, info_packet)
-                        sent_info_version = info_version
-
-                    for kind, (version, frame) in feeds.snapshot().items():
-                        if sent_feed_versions.get(kind) != version:
-                            send_json(serial_port, frame)
-                            sent_feed_versions[kind] = version
-
-                    if claude is not None:
-                        claude_version, claude_frame = claude.snapshot()
-                        if claude_version != sent_claude_version:
-                            send_json(serial_port, claude_frame)
-                            sent_claude_version = claude_version
-                        stats_version, stats_frame = claude.stats_snapshot()
-                        if stats_version != sent_claude_stats:
-                            send_json(serial_port, stats_frame)
-                            sent_claude_stats = stats_version
-                    if claude_usage is not None:
-                        usage_version, usage_frame = claude_usage.snapshot()
-                        if usage_frame is not None and usage_version != sent_claude_usage:
-                            send_json(serial_port, usage_frame)
-                            sent_claude_usage = usage_version
-
-                    if activity is not None:
-                        activity_version, activity_frame = activity.snapshot()
-                        if activity_frame is not None and activity_version != sent_activity:
-                            send_json(serial_port, activity_frame)
-                            sent_activity = activity_version
-
-                    forward_pc_toasts(toasts, serial_port, device_wifi, config)
-
-                    chunk = serial_port.read(256)
-                    if chunk:
-                        receive_buffer.extend(chunk)
-                        while b"\n" in receive_buffer:
-                            raw, _, remainder = receive_buffer.partition(b"\n")
-                            receive_buffer = bytearray(remainder)
-                            text = raw.decode("utf-8", errors="replace").strip()
-                            if not text:
-                                continue
-
-                            message = parse_frame(text)
-                            if message is None:
-                                continue
-
-                            message_type = message.get("type")
-                            if handle_claude_message(claude, message):
-                                pass
-                            elif activity is not None and activity.handle(message):
-                                pass
-                            elif message_type == "macro":
-                                execute_macro(config, int(message.get("id", 0)))
-                            elif message_type == "hello":
-                                protocol = message.get("protocol", "?")
-                                firmware = message.get("firmware", "?")
-                                log(
-                                    f"Connected to {message.get('device', 'ESP32')} "
-                                    f"firmware {firmware}, protocol {protocol}"
-                                )
-                                if protocol != PROTOCOL_VERSION:
-                                    log(
-                                        f"Warning: bridge protocol {PROTOCOL_VERSION} "
-                                        f"!= device protocol {protocol}"
-                                    )
-                                send_json(serial_port, macro_packet(config))
-                                send_wifi_provisioning(serial_port, config)
-                                sent_info_version = -1  # device rebooted: resend INFO
-                                sent_feed_versions.clear()
-                                sent_claude_version = -1
-                                sent_claude_stats = -1
-                                sent_claude_usage = -1
-                                sent_activity = -1
-                                device_wifi = None
-                            elif message_type == "wifi_status":
-                                if message.get("connected") and message.get("ip"):
-                                    device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
-                                    log("Device Wi-Fi connected; PC notifications go over Wi-Fi")
-                                else:
-                                    device_wifi = None
-                                    log("Device Wi-Fi not connected; PC notifications go over USB")
-                                write_device_state(device_wifi)
-                            elif message_type == "error":
-                                log(
-                                    f"ESP protocol error: {message.get('code', 'unknown')} "
-                                    f"({message.get('detail', '')})"
-                                )
-                            elif message_type not in {"pong", "rebooting", "phone"}:
-                                log(f"ESP: {message}")
-
-                    time.sleep(0.01)
+                serve_device(serial_port, "USB", config, ctx)
         except (serial.SerialException, OSError) as exc:
             if platform.system() == "Windows":
                 log(f"Serial disconnected: {exc}")

@@ -165,6 +165,18 @@ Provisions the device's Wi-Fi and the token for UDP notifications. Sent by the b
 {"type": "wifi", "ssid": "<network>", "pass": "<password>", "token": "<24 characters>", "port": 4210}
 ```
 
+### Wi-Fi link (`cyd_2usb`)
+
+Without USB, every frame in this document can travel as a signed UDP datagram instead (see [WIFI_LINK.md](WIFI_LINK.md)):
+
+```
+DK1 <mac> <ts> <seq> <part> <parts> <json chunk>
+```
+
+`mac` is the first 32 hex characters of HMAC-SHA256(notification token, everything after `<mac> `); `ts` is Unix time (0 = the deck has no clock yet), `seq` numbers the sender's frames, and a frame over 1200 bytes is split into up to 4 parts sharing `ts` and `seq`. The bridge listens on UDP 4211 and sends to the deck's notification port (4210).
+
+Link-only frames: bridge `probe` (answer with a beacon), `time` (sets the deck clock from the datagram's `ts`), `ack` `{"seq": n}` for each deck command (`macro`, `claude_reply`, `claude_clear`, `claude_open`, `lock_set`, `break_reply`); deck `beacon` `{"fw": "..."}`. The `stats` frame also carries `epoch` (Unix time) and `tz` (UTC offset in seconds) on both links.
+
 ### UDP notifications (`cyd_2usb`)
 
 Not a serial frame: a UDP datagram to the device's Wi-Fi address and `port`, at most 1024 bytes:

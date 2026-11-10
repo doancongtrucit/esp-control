@@ -34,3 +34,9 @@ uint16_t netPort();
 uint32_t netRejectedCount();
 int netRssi();     // dBm, 0 when not connected
 void netForget();  // erases saved Wi-Fi credentials and token
+
+// Signed bridge datagrams ("DK1 ..."), see udp_link.h; plain token packets still go to the handlers above.
+using LinkHandler = void (*)(const char *data, size_t len, const IPAddress &ip, uint16_t port);
+void netSetLinkHandler(LinkHandler handler);
+bool netSendTo(const IPAddress &ip, uint16_t port, const char *data, size_t len);
+const String &netToken();

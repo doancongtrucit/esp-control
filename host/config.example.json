@@ -170,6 +170,10 @@
     "ask_wait_seconds": 25,
     "usage": true
   },
+  "wifi_link": {
+    "enabled": true,
+    "port": 4211
+  },
   "activity": {
     "enabled": true,
     "stand_minutes": 50,

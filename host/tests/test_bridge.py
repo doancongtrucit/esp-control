@@ -506,3 +506,58 @@ if __name__ == "__main__":
 class ActivityStartTests(unittest.TestCase):
     def test_activity_can_be_turned_off(self):
         self.assertIsNone(bridge.start_activity({"activity": {"enabled": False}}))
+
+
+class WifiLinkServeTests(unittest.TestCase):
+    class FakeLink:
+        def __init__(self):
+            self.sent = []
+            self.reads = 0
+
+        def send_frame(self, frame):
+            self.sent.append(frame)
+
+        def read(self, _size):
+            self.reads += 1
+            return b""
+
+        def alive(self):
+            return self.reads < 3
+
+    class Snap:
+        def snapshot(self):
+            return 1, None
+
+    class Feeds:
+        def snapshot(self):
+            return {}
+
+    def ctx(self):
+        return {"disk_path": "C:\\", "lhm": None, "info_feed": self.Snap(), "feeds": self.Feeds(), "toasts": None,
+                "claude": None, "claude_usage": None, "activity": None, "hub": None, "previous": None}
+
+    def test_wifi_link_never_carries_wifi_credentials(self):
+        link = self.FakeLink()
+        config = {"wifi": {"ssid": "net", "password": "secret"}, "notifications": {"token": "t" * 24},
+                  "macros": []}
+        with patch.object(bridge, "get_stats", return_value=({"type": "stats"}, None)), \
+                patch.object(bridge, "forward_pc_toasts"), patch.object(bridge, "log"), \
+                patch.object(bridge.time, "sleep"):
+            bridge.serve_device(link, "Wi-Fi", config, self.ctx())
+        types = [f.get("type") for f in link.sent]
+        self.assertIn("stats", types)
+        self.assertNotIn("wifi", types)
+        self.assertNotIn("secret", json.dumps(link.sent))
+
+    def test_send_json_hands_frames_to_a_link(self):
+        link = self.FakeLink()
+        bridge.send_json(link, {"type": "ping"})
+        self.assertEqual([{"type": "ping"}], link.sent)
+
+    def test_no_wifi_link_without_a_token(self):
+        self.assertIsNone(bridge.start_udp_hub({"notifications": {"token": ""}}))
+        self.assertIsNone(bridge.start_udp_hub({"wifi_link": {"enabled": False}, "notifications": {"token": "x"}}))
+
+    def test_a_fixed_port_that_is_unplugged_counts_as_missing(self):
+        with patch.object(bridge.list_ports, "comports", return_value=[]):
+            self.assertIsNone(bridge.find_serial_port({"serial_port": "COM4"}, {}))

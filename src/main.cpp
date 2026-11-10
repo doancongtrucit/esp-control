@@ -28,6 +28,10 @@
 #include "theme.h"
 #include "ui_font.h"
 #include "ui_layout.h"
+#include "udp_link.h"
+
+#include <sys/time.h>
+#include <time.h>
 #endif
 
 namespace {
@@ -740,7 +744,118 @@ void renderFull() {
   statsDirty = false;
 }
 
+#ifdef DECK_UI_V2
+// ---------- PC link over Wi-Fi (signed UDP, see udp_link.h and docs/PROTOCOL.md) ----------
+// USB wins whenever the bridge talks over it; otherwise frames go to the bridge
+// that last sent us a valid datagram. With no link, the deck broadcasts a beacon.
+constexpr uint16_t BRIDGE_UDP_PORT = 4211;
+constexpr uint32_t SERIAL_HOST_MS = 6000, WIFI_LINK_MS = 10000, BEACON_MS = 3000;
+constexpr uint32_t COMMAND_RETRY_MS = 400;
+constexpr uint8_t COMMAND_TRIES = 6;
+uint32_t serialHostMs = 0;
+bool serialHostSeen = false;
+IPAddress wifiBridgeIp;
+uint16_t wifiBridgePort = 0;
+uint32_t wifiBridgeMs = 0;
+bool wifiBridgeSeen = false;
+uint32_t linkSeq = 0;
+LinkReplayGuard linkGuard;
+LinkReassembler linkJoin;
+int32_t tzOffsetSec = 7 * 3600;  // from the bridge's stats frame, kept in prefs
+
+struct PendingCommand {
+  uint32_t seq = 0;
+  String datagram;
+  uint8_t tries = 0;
+  uint32_t nextMs = 0;
+};
+PendingCommand pendingCommands[4];
+
+bool serialHostActive() { return serialHostSeen && millis() - serialHostMs < SERIAL_HOST_MS; }
+bool wifiLinkActive() { return wifiBridgeSeen && netConnected() && millis() - wifiBridgeMs < WIFI_LINK_MS; }
+
+uint32_t deckEpoch() {
+  const time_t t = time(nullptr);
+  return t > 1700000000 ? static_cast<uint32_t>(t) : 0;
+}
+
+void setDeckEpoch(uint32_t epoch) {
+  timeval tv{static_cast<time_t>(epoch), 0};
+  settimeofday(&tv, nullptr);
+}
+
+bool isLinkCommand(const char *type) {
+  static const char *const COMMANDS[] = {"macro", "claude_reply", "claude_clear", "claude_open", "lock_set", "break_reply"};
+  for (const char *c : COMMANDS)
+    if (strcmp(type, c) == 0) return true;
+  return false;
+}
+
+// Seals text into datagrams to ip:port; returns the seq (0 when too long). `single` gets a one-part datagram.
+uint32_t wifiSendText(const String &text, const IPAddress &ip, uint16_t port, String *single = nullptr) {
+  const size_t len = text.length();
+  const uint8_t parts = len == 0 ? 1 : (len + LINK_CHUNK - 1) / LINK_CHUNK;
+  if (parts > LINK_MAX_PARTS) return 0;
+  const uint32_t seq = ++linkSeq;
+  const uint32_t ts = deckEpoch();
+  static char buffer[LINK_DATAGRAM_MAX];
+  for (uint8_t i = 0; i < parts; ++i) {
+    const size_t offset = i * LINK_CHUNK;
+    const size_t n = linkSeal(netToken(), ts, seq, i, parts, text.c_str() + offset, min(LINK_CHUNK, len - offset),
+                              buffer, sizeof(buffer));
+    if (n == 0) return 0;
+    netSendTo(ip, port, buffer, n);
+    if (single && parts == 1) {
+      *single = String();
+      single->concat(buffer, n);
+    }
+  }
+  return seq;
+}
+
+void wifiSendFrame(JsonDocument &doc) {
+  String text;
+  serializeJson(doc, text);
+  const char *type = doc["type"] | "";
+  if (!isLinkCommand(type)) {
+    wifiSendText(text, wifiBridgeIp, wifiBridgePort);
+    return;
+  }
+  // Commands: acked by the bridge, resent with the same seq until then (the bridge runs them once).
+  PendingCommand *slot = &pendingCommands[0];
+  for (auto &p : pendingCommands) {
+    if (p.seq == 0) {
+      slot = &p;
+      break;
+    }
+    if (p.tries > slot->tries) slot = &p;
+  }
+  String datagram;
+  const uint32_t seq = wifiSendText(text, wifiBridgeIp, wifiBridgePort, &datagram);
+  if (seq == 0 || datagram.length() == 0) return;
+  slot->seq = seq;
+  slot->datagram = datagram;
+  slot->tries = 1;
+  slot->nextMs = millis() + COMMAND_RETRY_MS;
+}
+
+void sendBeacon(const IPAddress &ip, uint16_t port) {
+  JsonDocument doc;
+  doc["type"] = "beacon";
+  doc["fw"] = FIRMWARE_VERSION;
+  String text;
+  serializeJson(doc, text);
+  wifiSendText(text, ip, port);
+}
+#endif
+
 void sendFrame(JsonDocument &doc) {
+#ifdef DECK_UI_V2
+  if (!serialHostActive() && wifiLinkActive()) {
+    wifiSendFrame(doc);
+    return;
+  }
+#endif
   Serial.print(PROTOCOL_PREFIX);
   serializeJson(doc, Serial);
   Serial.println();
@@ -1074,6 +1189,20 @@ float readFloat(JsonVariantConst value, float fallback = NAN) {
 }
 
 void syncClock(JsonDocument &doc) {
+#ifdef DECK_UI_V2
+  const uint32_t epoch = doc["epoch"] | 0UL;
+  if (epoch > 1700000000UL) {
+    const uint32_t now = deckEpoch();
+    if (now == 0 || (epoch > now ? epoch - now : now - epoch) > 2) setDeckEpoch(epoch);
+  }
+  if (!doc["tz"].isNull()) {
+    const int32_t tz = doc["tz"].as<int32_t>();
+    if (tz != tzOffsetSec && tz > -14 * 3600 && tz < 15 * 3600) {
+      tzOffsetSec = tz;
+      prefs.putInt("tz", tz);
+    }
+  }
+#endif
   int y = 0, m = 0, d = 0;
   const char *date = doc["date"] | "";
   if (sscanf(date, "%4d-%2d-%2d", &y, &m, &d) == 3 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
@@ -1398,6 +1527,8 @@ void updatePcLink() {
 }
 #endif
 
+void dispatchFrame(JsonDocument &doc);
+
 void processSerialLine(const String &line) {
   bool framed = false;
   String payload;
@@ -1423,7 +1554,15 @@ void processSerialLine(const String &line) {
     }
     return;
   }
+#ifdef DECK_UI_V2
+  serialHostMs = millis();
+  serialHostSeen = true;
+#endif
+  dispatchFrame(doc);
+}
 
+// Frames from the bridge, over USB or (signed) Wi-Fi.
+void dispatchFrame(JsonDocument &doc) {
   const char *type = doc["type"] | "";
   if (strcmp(type, "stats") == 0) {
     handleStats(doc);
@@ -1479,6 +1618,85 @@ void pollSerial() {
     }
   }
 }
+
+#ifdef DECK_UI_V2
+void onLinkDatagram(const char *data, size_t len, const IPAddress &ip, uint16_t port) {
+  LinkEnvelope env;
+  if (!linkOpen(netToken(), data, len, env) || env.ts == 0) return;
+  const uint32_t now = deckEpoch();
+  if (now == 0) {
+    setDeckEpoch(env.ts);  // first signed datagram: take the bridge's clock
+  } else if (!linkGuard.fresh(env.ts, now)) {
+    return;  // stale: a replay, or a clock far off
+  }
+  if (linkGuard.seen(env.ts, env.seq)) return;
+  String text;
+  if (!linkJoin.feed(env, millis(), text)) return;
+  linkGuard.remember(env.ts, env.seq);
+  JsonDocument doc;
+  if (deserializeJson(doc, text)) return;
+  const char *type = doc["type"] | "";
+  wifiBridgeIp = ip;
+  wifiBridgePort = port;
+  wifiBridgeMs = millis();
+  wifiBridgeSeen = true;
+  if (strcmp(type, "probe") == 0 || strcmp(type, "time") == 0) {
+    sendBeacon(ip, port);  // the bridge links once it hears a beacon with a valid time
+    return;
+  }
+  if (strcmp(type, "ack") == 0) {
+    const uint32_t seq = doc["seq"] | 0UL;
+    for (auto &p : pendingCommands)
+      if (p.seq == seq) {
+        p.seq = 0;
+        p.datagram = String();
+      }
+    return;
+  }
+  // Credentials and maintenance frames are USB only.
+  if (strcmp(type, "wifi") == 0 || strcmp(type, "shot") == 0 || strcmp(type, "recalibrate") == 0) return;
+  dispatchFrame(doc);
+}
+
+void linkLoop() {
+  if (!netConnected()) return;
+  for (auto &p : pendingCommands) {
+    if (p.seq == 0 || static_cast<int32_t>(millis() - p.nextMs) < 0) continue;
+    if (p.tries >= COMMAND_TRIES) {
+      p.seq = 0;
+      p.datagram = String();
+      continue;
+    }
+    netSendTo(wifiBridgeIp, wifiBridgePort, p.datagram.c_str(), p.datagram.length());
+    ++p.tries;
+    p.nextMs = millis() + COMMAND_RETRY_MS;
+  }
+  static uint32_t lastBeacon = 0;
+  if (!serialHostActive() && !wifiLinkActive() && millis() - lastBeacon >= BEACON_MS) {
+    lastBeacon = millis();
+    sendBeacon(IPAddress(255, 255, 255, 255), BRIDGE_UDP_PORT);
+  }
+}
+
+// Without the bridge the clock still runs: from NTP or the last time the bridge sent.
+void clockFromSystem() {
+  static uint32_t lastMs = 0;
+  if (millis() - lastMs < 5000) return;
+  lastMs = millis();
+  const bool bridgeGone = !stats.everUpdated || millis() - stats.lastUpdateMs > 60000UL;
+  const uint32_t epoch = deckEpoch();
+  if ((stats.clockValid && !bridgeGone) || epoch == 0) return;
+  const time_t local = static_cast<time_t>(epoch) + tzOffsetSec;
+  tm parts;
+  gmtime_r(&local, &parts);
+  stats.clockSecondsAtSync = parts.tm_hour * 3600 + parts.tm_min * 60 + parts.tm_sec;
+  stats.clockSyncMs = millis();
+  stats.clockValid = true;
+  stats.dateYear = parts.tm_year + 1900;
+  stats.dateMonth = parts.tm_mon + 1;
+  stats.dateDay = parts.tm_mday;
+}
+#endif
 
 void setupTouchCalibration() {
   prefs.begin("deskdeck", false);
@@ -1552,6 +1770,8 @@ void setup() {
 #ifdef DECK_UI_V2
   ancsBegin("ESP32 Deck", onPhoneNotification);
   netBegin(onPcNotification, uiAramPacket);
+  netSetLinkHandler(onLinkDatagram);
+  tzOffsetSec = prefs.getInt("tz", tzOffsetSec);
 #endif
 }
 
@@ -1564,6 +1784,8 @@ void loop() {
   updatePhoneLink();
   sendPhonePresence();
   netLoop();
+  linkLoop();
+  clockFromSystem();
   updatePcLink();
   updateScreenSleep();
   uiUpdateStandby();
