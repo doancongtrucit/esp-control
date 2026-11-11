@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Home app on `cyd_2usb` (replaces the AI Tools placeholder): up to 12 Home Assistant device tiles on two pages that show and switch their state (toggle, run, hold-to-confirm for switches), and an air-conditioner card with ON/OFF, target temperature, mode and fan speed (`host/ha_controls.py`, `home_controls` in `host/config.json`). New icons: fan, snowflake, TV, power, bolt.
 - HOME SERVER tab on the Monitor screen (`cyd_2usb`, swipe from PC): CPU and load, RAM, disk, CPU temperature, network in/out, Home Assistant status and latency, uptime and pending updates, read by the bridge from Home Assistant's System Monitor sensors over its REST API (`host/home_server.py`, `home_server` in `host/config.json`).
 - `cyd_2usb` environment for the ESP32-2432S028 (USB-C + micro-USB, ST7789) with its separate XPT2046 touch bus.
 - 18 macros on three pages, hold-to-confirm, per-macro icons, gold price page (vang.today, thousand VND per chi).

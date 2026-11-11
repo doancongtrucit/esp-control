@@ -170,6 +170,21 @@ HOME SERVER tab of the Monitor screen, from Home Assistant (see [HOME_SERVER.md]
 
 Percentages, degrees C, Mbit/s; `ms` is the API round trip, `upt` seconds since boot, `upd` pending updates; `err` is `offline`, `token` or `error`. Unknown values are null.
 
+### `hactl` (`cyd_2usb`)
+
+Home screen tiles from Home Assistant (see [HOME_CONTROLS.md](HOME_CONTROLS.md)), sent when a state changes:
+
+```json
+{"type": "hactl",
+ "items": [{"n": "Air Con", "i": "ac", "k": "climate", "on": 1, "v": "25C Cool", "c": 0},
+           {"n": "PC", "i": "power", "k": "toggle", "on": 1, "v": "ON", "c": 1},
+           {"n": "Swing", "i": "bolt", "k": "run", "on": -1, "v": "Run", "c": 0}],
+ "ac": {"ix": 0, "on": true, "t": 25, "min": 16, "max": 30, "mode": "cool",
+        "modes": ["heat_cool", "cool", "dry"], "fan": "auto", "fans": ["auto", "low", "mid", "high"]}}
+```
+
+`k`: `toggle`, `run` or `climate`; `on`: 1, 0 or -1 (not a switch / unknown); `c`: 1 = hold 1 s before it runs. `ac` describes the first climate tile (null when there is none).
+
 ### `wifi` (`cyd_2usb`)
 
 Provisions the device's Wi-Fi and the token for UDP notifications. Sent by the bridge after it opens the port and after every `hello`; the device saves the values in flash and reconnects only when they change.
@@ -256,6 +271,18 @@ Every 2 s: whether the paired iPhone is connected over BLE and its signal streng
 ```
 
 `lock_set` turns auto-lock on or off (kept by the bridge). `break_reply` answers the stand-up reminder: `snooze` reminds again in 10 minutes, `ok` not until the next break.
+
+### `ha_press`, `ha_ac` (`cyd_2usb`)
+
+```json
+{"type": "ha_press", "i": 3}
+{"type": "ha_ac", "op": "power"}
+{"type": "ha_ac", "op": "temp", "d": 1}
+{"type": "ha_ac", "op": "mode", "m": "dry"}
+{"type": "ha_ac", "op": "fan", "m": "high"}
+```
+
+`ha_press` toggles or runs tile `i`; `ha_ac` drives the air conditioner with a choice from the `hactl` lists. The bridge maps them to Home Assistant services; nothing else is accepted.
 
 ### `macro`
 

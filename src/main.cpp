@@ -16,6 +16,7 @@
 #include "aram.h"
 #include "activity_info.h"
 #include "home_server_info.h"
+#include "ha_controls_info.h"
 #include "claude_status.h"
 #include "color_util.h"
 #include "deck_settings.h"
@@ -293,6 +294,7 @@ uint32_t claudeUsageRxMs = 0;
 ClaudeStats claudeStats;     // daily ask / answer / done counts ("cstats")
 ActivityInfo activity;       // time at the PC, reminders, auto-lock ("activity")
 HomeServerInfo homeServer;   // Home Assistant server metrics ("hserver")
+HaState haState;             // Home screen device tiles ("hactl")
 #endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
@@ -313,6 +315,7 @@ void uiClaudeFrame(const ClaudeState &next);
 void uiClaudeInfoChanged();
 void uiActivityFrame(const ActivityInfo &previous);
 void uiHomeServerChanged();
+void uiHaChanged();
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -788,7 +791,8 @@ void setDeckEpoch(uint32_t epoch) {
 }
 
 bool isLinkCommand(const char *type) {
-  static const char *const COMMANDS[] = {"macro", "claude_reply", "claude_clear", "claude_open", "lock_set", "break_reply"};
+  static const char *const COMMANDS[] = {"macro",    "claude_reply", "claude_clear", "claude_open",
+                                       "lock_set", "break_reply",  "ha_press",     "ha_ac"};
   for (const char *c : COMMANDS)
     if (strcmp(type, c) == 0) return true;
   return false;
@@ -1438,6 +1442,10 @@ void handleActivity(JsonDocument &doc) {
   if (parseActivityFrame(doc.as<JsonVariantConst>(), activity)) uiActivityFrame(previous);
 }
 
+void handleHa(JsonDocument &doc) {
+  if (parseHaFrame(doc.as<JsonVariantConst>(), haState)) uiHaChanged();
+}
+
 void handleHomeServer(JsonDocument &doc) {
   if (parseHomeServerFrame(doc.as<JsonVariantConst>(), homeServer)) uiHomeServerChanged();
 }
@@ -1596,6 +1604,8 @@ void dispatchFrame(JsonDocument &doc) {
     handleActivity(doc);
   } else if (strcmp(type, "hserver") == 0) {
     handleHomeServer(doc);
+  } else if (strcmp(type, "hactl") == 0) {
+    handleHa(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {

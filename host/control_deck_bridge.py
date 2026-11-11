@@ -1233,6 +1233,16 @@ def start_home_server_feed(config: dict[str, Any]) -> Any:
     return feed
 
 
+def start_home_controls(config: dict[str, Any]) -> Any:
+    """Home screen tiles for Home Assistant devices; None without Home Assistant."""
+    from ha_controls import start_ha_controls
+
+    controls = start_ha_controls(config, log=log)
+    if controls is not None:
+        log("Home screen: controlling Home Assistant devices")
+    return controls
+
+
 def start_udp_hub(config: dict[str, Any]) -> Any:
     """Wi-Fi link to the deck when USB is unplugged; None when off or without a token."""
     settings = config.get("wifi_link") or {}
@@ -1281,6 +1291,7 @@ def serve_device(
     sent_claude_usage = -1
     sent_activity = -1
     sent_hserver = -1
+    sent_hactl = -1
     device_wifi: tuple[str, int] | None = None
     if not usb and hub is not None and hub.deck is not None:
         device_wifi = (hub.deck[0], hub.deck_port)
@@ -1295,7 +1306,7 @@ def serve_device(
             last_full = now
             sent_info_version = -1
             sent_feed_versions.clear()
-            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = sent_hserver = -1
+            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = sent_hserver = sent_hactl = -1
             send_json(link, macro_packet(config))
         if now - last_send >= interval:
             payload, ctx["previous"] = get_stats(ctx["previous"], disk_path, lhm)
@@ -1339,6 +1350,13 @@ def serve_device(
                 send_json(link, hserver_frame)
                 sent_hserver = hserver_version
 
+        hactl = ctx.get("hactl")
+        if hactl is not None:
+            hactl_version, hactl_frame = hactl.snapshot()
+            if hactl_frame is not None and hactl_version != sent_hactl:
+                send_json(link, hactl_frame)
+                sent_hactl = hactl_version
+
         forward_pc_toasts(toasts, link, device_wifi if usb else None, config)
 
         chunk = link.read(256)
@@ -1359,6 +1377,8 @@ def serve_device(
                 if handle_claude_message(claude, message):
                     pass
                 elif activity is not None and activity.handle(message):
+                    pass
+                elif ctx.get("hactl") is not None and ctx["hactl"].handle(message):
                     pass
                 elif message_type == "macro":
                     execute_macro(config, int(message.get("id", 0)))
@@ -1386,6 +1406,7 @@ def serve_device(
                     sent_claude_usage = -1
                     sent_activity = -1
                     sent_hserver = -1
+                    sent_hactl = -1
                 elif message_type == "wifi_status":
                     if message.get("connected") and message.get("ip"):
                         device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
@@ -1471,6 +1492,7 @@ def run(config: dict[str, Any]) -> None:
         "activity": start_activity(config),
         "hub": start_udp_hub(config),
         "hserver": start_home_server_feed(config),
+        "hactl": start_home_controls(config),
     }
     psutil.cpu_percent(interval=None)
     ctx["previous"] = current_counters()

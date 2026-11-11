@@ -189,6 +189,7 @@
     "token": "",
     "name": "Home Server"
   },
+  "home_controls": [],
   "coins": [
     "bitcoin",
     "ethereum",

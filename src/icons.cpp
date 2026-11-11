@@ -23,7 +23,9 @@ constexpr NamedIcon ICON_NAMES[] = {
     {"pie", Icon::Pie},           {"coin", Icon::Coin},             {"trend", Icon::Trend},
     {"cloud", Icon::Cloud},       {"calendar", Icon::Calendar},     {"sun", Icon::Sun},
     {"rain", Icon::Rain},         {"storm", Icon::Storm},           {"fog", Icon::Fog},
-    {"clock", Icon::Clock},
+    {"clock", Icon::Clock},       {"fan", Icon::Fan},               {"ac", Icon::Snow},
+    {"snow", Icon::Snow},         {"tv", Icon::Tv},                 {"power", Icon::Power},
+    {"bolt", Icon::Bolt},
 };
 
 // Maps the 24-unit design grid onto the requested box.
@@ -362,5 +364,36 @@ void drawIcon(TFT_eSPI &tft, Icon icon, int x, int y, int size, uint16_t fg, uin
       p.line(12, 12, 12, 7);
       p.line(12, 12, 16, 14);
       break;
+    case Icon::Fan:  // three blades around a hub
+      p.circle(12, 6.5f, 4);
+      p.circle(17, 15.5f, 4);
+      p.circle(7, 15.5f, 4);
+      p.dot(12, 12.5f, 1.8f);
+      break;
+    case Icon::Snow:
+      p.line(12, 2.5f, 12, 21.5f);
+      p.line(3.8f, 7.2f, 20.2f, 16.8f);
+      p.line(3.8f, 16.8f, 20.2f, 7.2f);
+      p.line(9.5f, 3.5f, 12, 6);
+      p.line(14.5f, 3.5f, 12, 6);
+      p.line(9.5f, 20.5f, 12, 18);
+      p.line(14.5f, 20.5f, 12, 18);
+      break;
+    case Icon::Tv:
+      p.rect(3, 5, 18, 12);
+      p.line(12, 17, 12, 20);
+      p.line(8, 20.5f, 16, 20.5f);
+      break;
+    case Icon::Power:
+      p.arc(12, 13, 8, 0xC);
+      p.line(4, 13, 6, 7.5f);
+      p.line(20, 13, 18, 7.5f);
+      p.line(12, 3, 12, 12);
+      break;
+    case Icon::Bolt: {
+      const float bolt[] = {13.5f, 2, 5.5f, 13.5f, 11, 13.5f, 10, 22, 18.5f, 10, 13, 10};
+      p.poly(bolt, 6, true);
+      break;
+    }
   }
 }

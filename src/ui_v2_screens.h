@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break, HomeCtl };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -26,7 +26,7 @@ constexpr HomeApp HOME_APPS[8] = {
     {"Controls", Icon::Controls, Screen::Controls, 0x0a84ff, 0x0060df},
     {"Info", Icon::Pie, Screen::Info, 0xffd60a, 0xf5a300},
     {"Claude", Icon::Sparkle, Screen::Claude, 0xff9f0a, 0xff6b1a},
-    {"AI Tools", Icon::Clipboard, Screen::AiTools, 0xbf5af2, 0x8e44ec},
+    {"Home", Icon::Home, Screen::HomeCtl, 0x63e6be, 0x12b886},
     {"Standby", Icon::Clock, Screen::Standby, 0x64d2ff, 0x2b8fd8},
     {"Notify", Icon::Bell, Screen::Notify, 0xff375f, 0xe0244a},
     {"Settings", Icon::Gear, Screen::Settings, 0x8e8e93, 0x5c5c63},
@@ -2126,6 +2126,224 @@ void uiClaudeFrame(const ClaudeState &next) {
   if (screen == Screen::Claude) fullRedrawRequested = true;
 }
 
+// ---------- Home: Home Assistant device tiles and the air conditioner card ----------
+
+constexpr uint8_t HA_PER_PAGE = 6;
+uint8_t haPage = 0;
+bool haAcOpen = false;
+constexpr uint16_t T_HA_ON = 0x1B47;  // #1a6a3a, a tile whose device is on
+
+uint8_t haPages() { return max<uint8_t>(1, (haState.count + HA_PER_PAGE - 1) / HA_PER_PAGE); }
+
+void drawHaTile(int slot) {
+  const CellRect c = gridCell(slot, 3, 2, UI_HEADER_H);
+  const int index = haPage * HA_PER_PAGE + slot;
+  tft.fillRect(c.x, c.y, c.w, c.h, T_SURFACE);
+  if (index >= haState.count) return;
+  const HaTile &t = haState.tiles[index];
+  const bool on = t.on == 1;
+  const uint16_t bg = on ? T_HA_ON : T_CARD;
+  tft.fillRoundRect(c.x + 3, c.y + 3, c.w - 6, c.h - 6, 10, bg);
+  drawIcon(tft, t.icon, c.x + 12, c.y + 12, 26, on ? T_TEXT : T_MUTED, bg);
+  if (t.kind == HaKind::Climate) {  // "open" hint
+    drawIcon(tft, Icon::ChevronRight, c.x + c.w - 24, c.y + 16, 14, T_MUTED, bg);
+  } else if (t.confirm) {  // hold to confirm
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(T_ACCENT, bg);
+    uiTextIn(UiFont::Tiny, "HOLD", c.x + c.w - 12, c.y + 12);
+  }
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(T_TEXT, bg);
+  uiTextIn(UiFont::BodyBold, claudeFit(t.name, UiFont::BodyBold, c.w - 22), c.x + 11, c.y + c.h - 44);
+  const uint16_t valueColor = t.value == "N/A" ? T_DOWN : (on ? T_UP : (t.kind == HaKind::Run ? T_ACCENT_2 : T_MUTED));
+  tft.setTextColor(valueColor, bg);
+  uiTextIn(UiFont::Small, claudeFit(t.value, UiFont::Small, c.w - 22), c.x + 11, c.y + c.h - 24);
+}
+
+void drawHaPageDots() {
+  const uint8_t pages = haPages();
+  if (pages < 2) return;
+  for (int i = 0; i < pages; ++i) tft.fillCircle(150 + i * 10, UI_HEADER_H / 2, 3, i == haPage ? T_TEXT : T_DIVIDER);
+}
+
+// ---- air conditioner card ----
+constexpr int AC_TOP = UI_HEADER_H + 6;
+constexpr int AC_BTN = 44;
+constexpr int AC_MINUS_X = 8, AC_PLUS_X = 152, AC_TEMP_CX = (AC_MINUS_X + 44 + AC_PLUS_X) / 2;
+constexpr int AC_POWER_X = 206, AC_POWER_W = UI_SCREEN_W - 10 - AC_POWER_X;
+constexpr int AC_ROW_H = 30;
+constexpr int AC_MODE_Y = 124, AC_FAN_Y = 180;
+constexpr int AC_SEG_X = 62, AC_SEG_W = UI_SCREEN_W - 10 - AC_SEG_X;
+
+void drawAcSegments(int y, const String *items, uint8_t count, const String &active, bool enabled) {
+  for (uint8_t i = 0; i < count; ++i) {
+    const CellRect c = gridCellIn(i, count, 1, AC_SEG_X, y, AC_SEG_W, AC_ROW_H, 4);
+    const bool on = items[i] == active;
+    const uint16_t bg = on ? (enabled ? T_LINK : T_DIVIDER) : T_CARD;
+    tft.fillRoundRect(c.x, c.y, c.w, c.h, 8, bg);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(on ? T_TEXT : T_MUTED, bg);
+    uiTextIn(UiFont::Small, haModeLabel(items[i]), c.x + c.w / 2, c.y + c.h / 2);
+  }
+}
+
+void drawAcTemp() {
+  const HaAc &a = haState.ac;
+  tft.fillRect(AC_MINUS_X + AC_BTN + 2, AC_TOP, AC_PLUS_X - AC_MINUS_X - AC_BTN - 4, 80, T_SURFACE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(a.on ? T_TEXT : T_MUTED, T_SURFACE);
+  const String temp = String(a.temp);
+  const int half = uiTextWidth(temp, 6) / 2;
+  uiText(temp, AC_TEMP_CX - 4, AC_TOP + 36, 6);
+  tft.drawCircle(AC_TEMP_CX - 4 + half + 6, AC_TOP + 18, 4, a.on ? T_TEXT : T_MUTED);
+  tft.setTextColor(T_MUTED, T_SURFACE);
+  uiTextIn(UiFont::Tiny, "TARGET", AC_TEMP_CX, AC_TOP + 70);
+}
+
+void drawAcCard() {
+  const HaAc &a = haState.ac;
+  const String name = a.index < haState.count ? haState.tiles[a.index].name : String("Air Con");
+  drawHeaderV2(name.c_str(), true);
+  // - / + around the target temperature
+  for (int i = 0; i < 2; ++i) {
+    const int x = i ? AC_PLUS_X : AC_MINUS_X;
+    tft.fillRoundRect(x, AC_TOP + 14, AC_BTN, AC_BTN, 10, T_CARD);
+    tft.fillRect(x + 13, AC_TOP + 14 + AC_BTN / 2 - 2, AC_BTN - 26, 4, T_TEXT);
+    if (i) tft.fillRect(x + AC_BTN / 2 - 2, AC_TOP + 27, 4, AC_BTN - 26, T_TEXT);
+  }
+  drawAcTemp();
+  // power
+  const uint16_t pbg = a.on ? T_UP : T_CARD;
+  tft.fillRoundRect(AC_POWER_X, AC_TOP + 8, AC_POWER_W, 56, 12, pbg);
+  drawIcon(tft, Icon::Power, AC_POWER_X + 12, AC_TOP + 24, 24, a.on ? T_BG : T_TEXT, pbg);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(a.on ? T_BG : T_TEXT, pbg);
+  uiTextIn(UiFont::BodyBold, a.on ? "ON" : "OFF", AC_POWER_X + 46, AC_TOP + 36);
+  // mode and fan
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_MUTED, T_SURFACE);
+  uiTextIn(UiFont::Tiny, "MODE", 12, AC_MODE_Y + AC_ROW_H / 2);
+  uiTextIn(UiFont::Tiny, "FAN", 12, AC_FAN_Y + AC_ROW_H / 2);
+  drawAcSegments(AC_MODE_Y, a.modes, a.modeCount, a.mode, a.on);
+  drawAcSegments(AC_FAN_Y, a.fans, a.fanCount, a.fan, a.on);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_MUTED, T_SURFACE);
+  uiTextIn(UiFont::Tiny, "Infrared: the deck shows what was sent", UI_SCREEN_W / 2, 226);
+}
+
+void drawHaV2() {
+  if (haAcOpen && haState.ac.has) {
+    drawAcCard();
+    return;
+  }
+  haAcOpen = false;
+  drawHeaderV2("HOME", true);
+  drawHaPageDots();
+  if (!haState.has) {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(T_MUTED, T_SURFACE);
+    uiText("Waiting for Home Assistant", UI_SCREEN_W / 2, 110, 2);
+    uiTextIn(UiFont::Small, "Setup: docs/HOME_CONTROLS.md", UI_SCREEN_W / 2, 134);
+    return;
+  }
+  if (haPage >= haPages()) haPage = 0;
+  for (int slot = 0; slot < HA_PER_PAGE; ++slot) drawHaTile(slot);
+}
+
+void touchAcCard(uint16_t x, uint16_t y) {
+  HaAc &a = haState.ac;
+  JsonDocument doc;
+  doc["type"] = "ha_ac";
+  if (y >= AC_TOP + 14 && y <= AC_TOP + 14 + AC_BTN && (x < AC_MINUS_X + AC_BTN || (x >= AC_PLUS_X && x < AC_PLUS_X + AC_BTN))) {
+    const int d = x >= AC_PLUS_X ? 1 : -1;
+    const int next = constrain(a.temp + d, a.minTemp, a.maxTemp);
+    if (next == a.temp) return;
+    a.temp = next;
+    doc["op"] = "temp";
+    doc["d"] = d;
+    sendFrame(doc);
+    drawAcTemp();
+    delay(120);  // a short repeat guard while the finger stays down
+    return;
+  }
+  if (x >= AC_POWER_X && y >= AC_TOP + 8 && y <= AC_TOP + 64) {
+    a.on = !a.on;
+    doc["op"] = "power";
+    sendFrame(doc);
+    waitForRelease();
+    fullRedrawRequested = true;
+    return;
+  }
+  const int rowY = y >= AC_MODE_Y && y < AC_MODE_Y + AC_ROW_H ? AC_MODE_Y : (y >= AC_FAN_Y && y < AC_FAN_Y + AC_ROW_H ? AC_FAN_Y : -1);
+  if (rowY < 0 || x < AC_SEG_X) return;
+  const bool mode = rowY == AC_MODE_Y;
+  const uint8_t count = mode ? a.modeCount : a.fanCount;
+  const int i = gridIndexIn(x, y, count, 1, AC_SEG_X, rowY, AC_SEG_W, AC_ROW_H, 4);
+  if (i < 0) return;
+  const String choice = mode ? a.modes[i] : a.fans[i];
+  if (mode) {
+    a.mode = choice;
+    a.on = true;  // choosing a mode turns it on
+  } else {
+    a.fan = choice;
+  }
+  doc["op"] = mode ? "mode" : "fan";
+  doc["m"] = choice;
+  sendFrame(doc);
+  waitForRelease();
+  fullRedrawRequested = true;
+}
+
+// Hold to confirm: a bar fills along the tile's bottom edge for HOLD_CONFIRM_MS.
+bool haHoldTile(int slot) {
+  const CellRect c = gridCell(slot, 3, 2, UI_HEADER_H);
+  const uint32_t start = millis();
+  int misses = 0;
+  while (millis() - start < HOLD_CONFIRM_MS) {
+    misses = touchHeld() ? 0 : misses + 1;
+    if (misses >= 3) {
+      drawHaTile(slot);
+      return false;
+    }
+    tft.fillRect(c.x + 12, c.y + c.h - 9, (c.w - 24) * (millis() - start) / HOLD_CONFIRM_MS, 3, T_TEXT);
+    delay(20);
+  }
+  return true;
+}
+
+void touchHaV2(uint16_t x, uint16_t y) {
+  if (haAcOpen) {
+    touchAcCard(x, y);
+    return;
+  }
+  const int slot = gridIndexAt(x, y, 3, 2, UI_HEADER_H);
+  const int index = haPage * HA_PER_PAGE + slot;
+  if (slot < 0 || index >= haState.count) return;
+  HaTile &t = haState.tiles[index];
+  if (t.kind == HaKind::Climate && haState.ac.has) {
+    haAcOpen = true;
+    waitForRelease();
+    fullRedrawRequested = true;
+    return;
+  }
+  if (t.confirm && !haHoldTile(slot)) return;  // let go early: nothing happens
+  JsonDocument doc;
+  doc["type"] = "ha_press";
+  doc["i"] = index;
+  sendFrame(doc);
+  ledFlashUntil = millis() + 150;
+  if (t.kind == HaKind::Toggle && t.on >= 0) {  // show it at once; the bridge confirms
+    t.on = t.on ? 0 : 1;
+    t.value = t.on ? "ON" : "OFF";
+  }
+  drawHaTile(slot);
+  waitForRelease();
+}
+
+void uiHaChanged() {
+  if (screen == Screen::HomeCtl) fullRedrawRequested = true;
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -2145,6 +2363,7 @@ void uiRenderFullV2() {
     case Screen::Settings: drawSettingsV2(); break;
     case Screen::Aram: drawAramV2(); break;
     case Screen::Break: drawBreakV2(); break;
+    case Screen::HomeCtl: drawHaV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -2204,6 +2423,12 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     waitForRelease();
     return;
   }
+  if (screen == Screen::HomeCtl && haAcOpen && y < UI_HEADER_H && x < HOME_BTN_W) {
+    haAcOpen = false;  // the air conditioner card goes back to the tiles
+    waitForRelease();
+    fullRedrawRequested = true;
+    return;
+  }
   if (screen != Screen::Home && y < UI_HEADER_H && x < HOME_BTN_W) {
     if (screen == Screen::Aram) aramDismissed = true;  // stay home until the next game
     if (screen == Screen::Claude) claudeAutoOpened = false;
@@ -2217,6 +2442,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Info: touchInfoV2(x, y); break;
     case Screen::Settings: touchSettingsV2(x, y); break;
     case Screen::Claude: touchClaudeV2(x, y); break;
+    case Screen::HomeCtl: touchHaV2(x, y); break;
     default: break;
   }
 }
@@ -2229,12 +2455,17 @@ void uiOpenForShot(const char *name, int tab) {
   } SCREENS[] = {{"home", Screen::Home},       {"monitor", Screen::Monitor}, {"controls", Screen::Controls},
                  {"info", Screen::Info},       {"claude", Screen::Claude},   {"aitools", Screen::AiTools},
                  {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings},
-                 {"aram", Screen::Aram},       {"break", Screen::Break}};
+                 {"aram", Screen::Aram},       {"break", Screen::Break},
+                 {"ha", Screen::HomeCtl}};
   for (const auto &entry : SCREENS) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }
   if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
   if (tab >= 0 && screen == Screen::Monitor) monitorTab = tab % MON_TABS;
+  if (screen == Screen::HomeCtl) {  // tab 9 opens the air conditioner card, else a page
+    haAcOpen = tab == 9;
+    if (tab >= 0 && tab != 9) haPage = tab;
+  }
   if (tab >= 0 && screen == Screen::Settings) settingsTab = tab % SET_TABS;
   if (tab >= 0 && screen == Screen::Controls) controlsPage = tab % MACRO_PAGES;
   if (tab >= 0 && screen == Screen::Claude) claudeTab = tab % CLAUDE_TABS;
@@ -2251,6 +2482,10 @@ void uiSwipeV2(int step) {
   switch (screen) {
     case Screen::Info: infoTab = (infoTab + INFO_TABS + step) % INFO_TABS; break;
     case Screen::Monitor: monitorTab = (monitorTab + MON_TABS + step) % MON_TABS; break;
+    case Screen::HomeCtl:
+      if (haAcOpen || haPages() < 2) return;
+      haPage = (haPage + haPages() + step) % haPages();
+      break;
     case Screen::Settings: settingsTab = (settingsTab + SET_TABS + step) % SET_TABS; break;
     case Screen::Controls: controlsPage = (controlsPage + MACRO_PAGES + step) % MACRO_PAGES; break;
     case Screen::Claude:

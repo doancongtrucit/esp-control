@@ -35,7 +35,7 @@ PROBE_EVERY_S = 3.0
 BRIDGE_PORT = 4211
 DECK_PORT = 4210
 # Deck -> bridge frames that change something on the PC: acknowledged, retried by the deck, run once.
-COMMANDS = {"macro", "claude_reply", "claude_clear", "claude_open", "lock_set", "break_reply"}
+COMMANDS = {"macro", "claude_reply", "claude_clear", "claude_open", "lock_set", "break_reply", "ha_press", "ha_ac"}
 # Frames the deck must never accept over Wi-Fi (credentials, maintenance).
 USB_ONLY = {"wifi", "shot", "recalibrate"}
 

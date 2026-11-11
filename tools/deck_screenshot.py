@@ -54,7 +54,7 @@ def sample_frames() -> list[dict]:
         {"type": "info", "g": {"time": stamp, "items": [
             {"n": "SJC 1L", "b": 12150, "s": 12350, "c": 50}, {"n": "Nhan 9999", "b": 11620, "s": 11920, "c": -30}],
             "xau": 2381.4, "xauc": -6.2}},
-        coin, stock, weather, ACTIVITY, HSERVER,
+        coin, stock, weather, ACTIVITY, HSERVER, HACTL,
         bridge.notify_packet("Zalo", "Nhóm Dự án", "Chiều nay họp lúc 3 giờ, nhớ mang tài liệu nhé!", source="phone"),
     ]
 
@@ -85,6 +85,16 @@ ACTIVITY = {"type": "activity", "on": 312, "sess": 52, "brk": 6, "long": 95,
 HSERVER = {"type": "hserver", "name": "Home Server", "on": True, "ms": 18, "ver": "2026.11.1",
            "cpu": 14.0, "ram": 47.0, "disk": 38.0, "temp": 52.0, "load": 0.36, "dn": 2.4, "up": 0.6,
            "upt": 273600, "upd": 2, "bat": None, "t": "12:00"}
+HACTL = {"type": "hactl", "items": [
+    {"n": "Air Con", "i": "ac", "k": "climate", "on": 1, "v": "25C Cool", "c": 0},
+    {"n": "Fan", "i": "fan", "k": "toggle", "on": 1, "v": "ON", "c": 0},
+    {"n": "TV", "i": "tv", "k": "toggle", "on": 0, "v": "OFF", "c": 0},
+    {"n": "PC", "i": "power", "k": "toggle", "on": 1, "v": "ON", "c": 1},
+    {"n": "Fan speed", "i": "fan", "k": "run", "on": -1, "v": "Run", "c": 0},
+    {"n": "Swing", "i": "bolt", "k": "run", "on": -1, "v": "Run", "c": 0},
+    {"n": "Fan timer", "i": "clock", "k": "run", "on": -1, "v": "Run", "c": 0}],
+    "ac": {"ix": 0, "on": True, "t": 25, "min": 16, "max": 30, "mode": "cool",
+           "modes": ["heat_cool", "cool", "dry"], "fan": "auto", "fans": ["auto", "low", "mid", "high"]}}
 CLAUDE_STATS = {"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
 
 
