@@ -12,6 +12,7 @@ The gold price feed uses the public vang.today API over the PC's internet.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import math
 import os
@@ -1233,6 +1234,92 @@ def start_home_server_feed(config: dict[str, Any]) -> Any:
     return feed
 
 
+def ensure_notify_api_token(config: dict[str, Any], path: Path) -> None:
+    """Gives the notify API its own random token on first run (saved in config.json)."""
+    settings = config.setdefault("notify_api", {})
+    if settings.get("enabled", True) and not settings.get("token"):
+        settings["token"] = secrets.token_urlsafe(24)
+        path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def start_notify_api_for(config: dict[str, Any], outbox: Any) -> Any:
+    """HTTP endpoint for Home Assistant / Hermes notices, sounds and speech; None when off."""
+    from notify_api import start_notify_api
+
+    return start_notify_api(config, deliver=outbox.append, log=log)
+
+
+PCM_GAP = {"USB": 0.13, "Wi-Fi": 0.02}  # pace speech frames so the deck's 2 KB serial buffer keeps up
+CLIP_PAUSE_S = 0.3  # between two spoken clips
+
+
+def next_outbox_frame(outbox: Any, now: float, pacing: dict[str, float], gap: float) -> dict[str, Any] | None:
+    """The next frame for the deck, or None to wait: speech chunks are paced, and a new clip
+    waits until the previous one has played (the deck holds one clip at a time)."""
+    if not outbox:
+        return None
+    frame = outbox[0]
+    kind = frame.get("type")
+    if kind == "say":
+        if now < pacing.get("speech_free_at", 0.0):
+            return None
+        length = int(frame.get("len") or 0)
+        chunks = -(-length // 1024)
+        rate = max(1, int(frame.get("rate") or 8000))
+        pacing["speech_free_at"] = now + chunks * gap + length / rate + CLIP_PAUSE_S
+    elif kind == "pcm":
+        if now < pacing.get("pcm_at", 0.0):
+            return None
+        pacing["pcm_at"] = now + gap
+    return outbox.popleft()
+
+
+def start_fuel_prices(config: dict[str, Any]) -> Any:
+    """Petrolimex fuel prices for the Info > Prices tab; None when turned off."""
+    if not (config.get("fuel") or {}).get("enabled", True):
+        return None
+    from fuel_prices import FuelFeed
+
+    feed = FuelFeed(config, Path(__file__).with_name("fuel_state.json"), log=log)
+    feed.start()
+    return feed
+
+
+def start_announcer(config: dict[str, Any], ctx: dict[str, Any]) -> Any:
+    """Spoken announcements (Claude sessions, PC alerts, fuel, meetings, morning brief); None when off."""
+    if not (config.get("voice_alerts") or {}).get("enabled", True):
+        return None
+    from announcer import Announcer
+    from ics_calendar import start_calendar
+
+    speak = None
+    try:
+        from speech import make_speaker
+
+        speak = make_speaker(str((config.get("notify_api") or {}).get("voice") or "vi-VN-HoaiMyNeural"), log)
+    except ImportError:
+        log("Voice alerts: no speech (pip install edge-tts miniaudio); tones and notices only")
+    ctx["calendar"] = start_calendar(config, log=log)
+    announcer = Announcer(config, deliver=ctx["outbox"].extend, speak=speak, log=log)
+    if ctx.get("fuel") is not None:
+        ctx["fuel"].on_change = announcer.on_fuel_change
+    claude, calendar = ctx.get("claude"), ctx.get("calendar")
+    announcer.start_polling(
+        claude=lambda: claude.snapshot()[1] if claude is not None else None,
+        meetings=lambda: calendar.snapshot() if calendar is not None else None,
+        brief_sources=lambda: brief_sources(ctx),
+    )
+    return announcer
+
+
+def brief_sources(ctx: dict[str, Any]) -> tuple[Any, Any, Any]:
+    """(weather frame, fuel frame, meetings or None without a calendar) for the morning brief."""
+    weather = (ctx["feeds"].snapshot().get("weather") or (0, None))[1]
+    fuel = ctx["fuel"].snapshot()[1] if ctx.get("fuel") is not None else None
+    meetings = ctx["calendar"].snapshot() if ctx.get("calendar") is not None else None
+    return weather, fuel, meetings
+
+
 def start_home_controls(config: dict[str, Any]) -> Any:
     """Home screen tiles for Home Assistant devices; None without Home Assistant."""
     from ha_controls import start_ha_controls
@@ -1292,6 +1379,8 @@ def serve_device(
     sent_activity = -1
     sent_hserver = -1
     sent_hactl = -1
+    sent_fuel = -1
+    pacing: dict[str, float] = {}
     device_wifi: tuple[str, int] | None = None
     if not usb and hub is not None and hub.deck is not None:
         device_wifi = (hub.deck[0], hub.deck_port)
@@ -1306,11 +1395,13 @@ def serve_device(
             last_full = now
             sent_info_version = -1
             sent_feed_versions.clear()
-            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = sent_hserver = sent_hactl = -1
+            sent_claude_version = sent_claude_stats = sent_claude_usage = sent_activity = sent_hserver = sent_hactl = sent_fuel = -1
             send_json(link, macro_packet(config))
         if now - last_send >= interval:
             payload, ctx["previous"] = get_stats(ctx["previous"], disk_path, lhm)
             send_json(link, payload)
+            if ctx.get("announcer") is not None:
+                ctx["announcer"].on_stats(payload)
             last_send = now
 
         info_version, info_packet = info_feed.snapshot()
@@ -1350,6 +1441,20 @@ def serve_device(
                 send_json(link, hserver_frame)
                 sent_hserver = hserver_version
 
+        outbox = ctx.get("outbox")
+        while outbox:
+            frame = next_outbox_frame(outbox, now, pacing, PCM_GAP.get(kind, 0.13))
+            if frame is None:
+                break
+            send_json(link, frame)
+
+        fuel = ctx.get("fuel")
+        if fuel is not None:
+            fuel_version, fuel_frame = fuel.snapshot()
+            if fuel_frame is not None and fuel_version != sent_fuel:
+                send_json(link, fuel_frame)
+                sent_fuel = fuel_version
+
         hactl = ctx.get("hactl")
         if hactl is not None:
             hactl_version, hactl_frame = hactl.snapshot()
@@ -1380,6 +1485,10 @@ def serve_device(
                     pass
                 elif ctx.get("hactl") is not None and ctx["hactl"].handle(message):
                     pass
+                elif message_type == "brief":
+                    if ctx.get("announcer") is not None:
+                        ctx["announcer"].brief(*brief_sources(ctx))
+                        log("Morning brief requested on the deck")
                 elif message_type == "macro":
                     execute_macro(config, int(message.get("id", 0)))
                 elif message_type in {"hello", "beacon"}:
@@ -1407,6 +1516,7 @@ def serve_device(
                     sent_activity = -1
                     sent_hserver = -1
                     sent_hactl = -1
+                    sent_fuel = -1
                 elif message_type == "wifi_status":
                     if message.get("connected") and message.get("ip"):
                         device_wifi = (str(message["ip"]), int(message.get("port", DEFAULT_NOTIFY_PORT)))
@@ -1493,7 +1603,11 @@ def run(config: dict[str, Any]) -> None:
         "hub": start_udp_hub(config),
         "hserver": start_home_server_feed(config),
         "hactl": start_home_controls(config),
+        "fuel": start_fuel_prices(config),
+        "outbox": collections.deque(),  # frames from the notify API, sent by the deck loop
     }
+    ctx["notify_api"] = start_notify_api_for(config, ctx["outbox"])
+    ctx["announcer"] = start_announcer(config, ctx)
     psutil.cpu_percent(interval=None)
     ctx["previous"] = current_counters()
     hub = ctx["hub"]
@@ -1576,6 +1690,7 @@ def main() -> None:
     config = load_config(config_path)
     if notify_settings(config).get("enabled", True):
         ensure_notify_token(config, config_path)
+    ensure_notify_api_token(config, config_path)
 
     global LOG_FILE, DEVICE_STATE_FILE
     log_name = str(config.get("log_file", "control-deck.log") or "").strip()

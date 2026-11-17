@@ -1,3 +1,4 @@
+import collections
 import importlib.util
 import json
 import sys
@@ -506,6 +507,36 @@ if __name__ == "__main__":
 class ActivityStartTests(unittest.TestCase):
     def test_activity_can_be_turned_off(self):
         self.assertIsNone(bridge.start_activity({"activity": {"enabled": False}}))
+
+
+class SpeechPacingTests(unittest.TestCase):
+    def clip(self, clip_id, length=2048):
+        frames = [{"type": "say", "id": clip_id, "rate": 8000, "len": length}]
+        frames += [{"type": "pcm", "id": clip_id, "o": o} for o in range(0, length, 1024)]
+        return frames
+
+    def drain(self, outbox, pacing, start, stop, step=0.01):
+        sent, now = [], start
+        while now < stop:
+            frame = bridge.next_outbox_frame(outbox, now, pacing, gap=0.02)
+            if frame is not None:
+                sent.append((round(now, 2), frame["type"], frame["id"]))
+            now += step
+        return sent
+
+    def test_a_second_clip_waits_until_the_first_has_played(self):
+        outbox = collections.deque(self.clip(1) + self.clip(2))
+        sent = self.drain(outbox, {}, 0.0, 2.0)
+        says = [t for t, kind, _ in sent if kind == "say"]
+        self.assertEqual(2, len(says))
+        # clip 1: 2048 bytes at 8 kHz = 0.256 s, after its two chunks (0.04 s), plus a 0.3 s pause
+        self.assertGreaterEqual(says[1] - says[0], 0.256 + 0.3)
+        self.assertEqual([1, 1, 1, 2, 2, 2], [i for _, _, i in sent])
+
+    def test_other_frames_go_out_at_once(self):
+        outbox = collections.deque([{"type": "notify", "id": 0}, {"type": "sound", "id": 0}])
+        sent = self.drain(outbox, {}, 0.0, 0.05)
+        self.assertEqual(["notify", "sound"], [k for _, k, _ in sent][:2])
 
 
 class WifiLinkServeTests(unittest.TestCase):

@@ -17,6 +17,11 @@
 #include "activity_info.h"
 #include "home_server_info.h"
 #include "ha_controls_info.h"
+#include "fuel_info.h"
+#include "timer_logic.h"
+#include "sound.h"
+
+#include <mbedtls/base64.h>
 #include "claude_status.h"
 #include "color_util.h"
 #include "deck_settings.h"
@@ -295,6 +300,7 @@ ClaudeStats claudeStats;     // daily ask / answer / done counts ("cstats")
 ActivityInfo activity;       // time at the PC, reminders, auto-lock ("activity")
 HomeServerInfo homeServer;   // Home Assistant server metrics ("hserver")
 HaState haState;             // Home screen device tiles ("hactl")
+FuelInfo fuel;               // Petrolimex fuel prices ("fuel")
 #endif
 bool phoneLinkUp = false;  // iPhone ANCS connected (Task 5)
 bool pcLinkUp = false;     // Wi-Fi notification link up (Task 6)
@@ -316,6 +322,9 @@ void uiClaudeInfoChanged();
 void uiActivityFrame(const ActivityInfo &previous);
 void uiHomeServerChanged();
 void uiHaChanged();
+void playSound(Sound s);
+bool timerRinging();
+void timerTick();
 #endif
 String serialLine;
 uint32_t lastTouchMs = 0;
@@ -792,7 +801,7 @@ void setDeckEpoch(uint32_t epoch) {
 
 bool isLinkCommand(const char *type) {
   static const char *const COMMANDS[] = {"macro",    "claude_reply", "claude_clear", "claude_open",
-                                       "lock_set", "break_reply",  "ha_press",     "ha_ac"};
+                                       "lock_set", "break_reply",  "ha_press",     "ha_ac",        "brief"};
   for (const char *c : COMMANDS)
     if (strcmp(type, c) == 0) return true;
   return false;
@@ -1072,6 +1081,11 @@ void updateStatusLed() {
     setLed(0, 0, LED_LEVEL * 6);
     return;
   }
+  if (timerRinging()) {  // a timer or the alarm: fast white / red flashes
+    if ((millis() / 250) % 2) setLed(LED_LEVEL * 8, LED_LEVEL * 8, LED_LEVEL * 8);
+    else setLed(LED_LEVEL * 8, 0, 0);
+    return;
+  }
   if (claude.anyWaiting()) {  // a Claude Code session needs you: blink orange
     if ((millis() / 500) % 2) setLed(LED_LEVEL * 6, LED_LEVEL * 2, 0);
     else setLed(LED_LEVEL, LED_LEVEL / 3, 0);
@@ -1095,6 +1109,104 @@ void updateStatusLed() {
   }
 #endif
 }
+
+#ifdef DECK_UI_V2
+// ---------- Sound settings and playback rules ----------
+// Kept in their own namespace so the older settings blob stays compatible.
+struct SoundSettings {
+  uint8_t volume = 2;  // 0 off .. 3 high (capped for weak USB ports)
+  uint8_t groups = 0x3F & ~(1u << static_cast<uint8_t>(SoundGroup::Click));  // touch clicks off
+} soundSettings;
+
+void loadSoundSettings() {
+  Preferences p;
+  if (!p.begin("decksound", true)) return;
+  soundSettings.volume = min<uint8_t>(p.getUChar("vol", soundSettings.volume), SOUND_VOLUMES - 1);
+  soundSettings.groups = p.getUChar("grp", soundSettings.groups);
+  p.end();
+}
+
+void saveSoundSettings() {
+  Preferences p;
+  p.begin("decksound", false);
+  p.putUChar("vol", soundSettings.volume);
+  p.putUChar("grp", soundSettings.groups);
+  p.end();
+}
+
+bool soundGroupOn(SoundGroup g) { return soundSettings.groups & (1u << static_cast<uint8_t>(g)); }
+
+// Plays when the volume, the sound's group and quiet hours allow it.
+void playSound(Sound s) {
+  if (soundAllowed(s, soundSettings.volume, soundSettings.groups, quietNow())) soundPlay(s, soundSettings.volume);
+}
+
+// ---------- Speech clips from the bridge ----------
+// {"type":"say","id":7,"rate":8000,"len":24000,"urgent":false} then
+// {"type":"pcm","id":7,"o":0,"d":"<base64 of 8-bit unsigned mono samples>"} until len bytes arrived.
+constexpr size_t SPEECH_MAX = 48000;  // 6 s at 8 kHz; the clip lives in RAM while it plays
+uint8_t *speechBuf = nullptr;
+size_t speechLen = 0, speechGot = 0;
+uint32_t speechId = 0, speechStartMs = 0;
+uint16_t speechRate = 8000;
+bool speechUrgent = false, speechPlaying = false;
+
+void speechFree() {
+  free(speechBuf);
+  speechBuf = nullptr;
+  speechLen = speechGot = 0;
+  speechPlaying = false;
+}
+
+void handleSay(JsonDocument &doc) {
+  const size_t len = doc["len"] | 0;
+  if (len == 0 || len > SPEECH_MAX) return;
+  if (speechPlaying) soundStop();
+  speechFree();
+  speechBuf = static_cast<uint8_t *>(malloc(len));
+  if (!speechBuf) return;
+  speechLen = len;
+  speechId = doc["id"] | 0UL;
+  speechRate = constrain(static_cast<int>(doc["rate"] | 8000), 4000, 16000);
+  speechUrgent = doc["urgent"] | false;
+  speechStartMs = millis();
+}
+
+void handlePcm(JsonDocument &doc) {
+  if (!speechBuf || (doc["id"] | 0UL) != speechId) return;
+  const size_t offset = doc["o"] | 0;
+  const char *data = doc["d"] | "";
+  if (offset >= speechLen) return;
+  size_t written = 0;
+  if (mbedtls_base64_decode(speechBuf + offset, speechLen - offset, &written,
+                            reinterpret_cast<const unsigned char *>(data), strlen(data)) != 0)
+    return;
+  speechGot += written;
+  if (speechGot < speechLen) return;
+  const bool allowed = soundSettings.volume > 0 && soundGroupOn(SoundGroup::Alert) && (speechUrgent || !quietNow());
+  if (allowed && soundPlayPcm(speechBuf, speechLen, speechRate, soundSettings.volume)) {
+    speechPlaying = true;
+    noteActivity();
+  } else {
+    speechFree();
+  }
+}
+
+void handleSoundFrame(JsonDocument &doc) {
+  const Sound s = soundFromName(doc["s"] | "");
+  if (s == Sound::None) return;
+  if (doc["urgent"] | false) {  // e.g. a doorbell: through quiet hours, still not when muted
+    if (soundSettings.volume > 0) soundPlay(s, soundSettings.volume);
+  } else {
+    playSound(s);
+  }
+}
+
+void speechLoop() {
+  if (speechPlaying && !soundPlaying()) speechFree();
+  if (speechBuf && !speechPlaying && millis() - speechStartMs > 20000) speechFree();  // clip never completed
+}
+#endif
 
 #ifdef DECK_UI_V2
 #include "ui_v2_screens.h"
@@ -1337,7 +1449,8 @@ void handleInfo(JsonDocument &doc) {
 #ifdef DECK_UI_V2
 // Adds a notification from any source and alerts the user (banner + blue LED).
 // Muted sources/apps are dropped; in quiet hours it is stored without banner, LED or wake.
-void addNotification(NotifySource source, const String &app, const String &from, const String &body) {
+void addNotification(NotifySource source, const String &app, const String &from, const String &body,
+                     Sound sound = Sound::None) {
   if (!notificationAllowed(settings, source, app)) return;
   notifyStore.add(source, app, from, body, millis());
   if (quietNow()) {
@@ -1347,6 +1460,7 @@ void addNotification(NotifySource source, const String &app, const String &from,
   notifyFlashUntil = millis() + 300;
   noteActivity();
   uiNotificationArrived();
+  playSound(sound != Sound::None ? sound : (source == NotifySource::Phone ? Sound::NotifyPhone : Sound::NotifyPc));
 }
 
 void copyText(char *dest, size_t size, JsonVariantConst value) {
@@ -1442,6 +1556,10 @@ void handleActivity(JsonDocument &doc) {
   if (parseActivityFrame(doc.as<JsonVariantConst>(), activity)) uiActivityFrame(previous);
 }
 
+void handleFuel(JsonDocument &doc) {
+  if (parseFuelFrame(doc.as<JsonVariantConst>(), fuel)) uiGoldChanged();
+}
+
 void handleHa(JsonDocument &doc) {
   if (parseHaFrame(doc.as<JsonVariantConst>(), haState)) uiHaChanged();
 }
@@ -1453,8 +1571,10 @@ void handleHomeServer(JsonDocument &doc) {
 void handleNotify(JsonDocument &doc) {
   const char *src = doc["src"] | "pc";
   addNotification(strcmp(src, "phone") == 0 ? NotifySource::Phone : NotifySource::Pc,
-                  doc["app"] | "", doc["from"] | "", doc["body"] | "");
+                  doc["app"] | "", doc["from"] | "", doc["body"] | "", soundFromName(doc["s"] | ""));
 }
+
+
 
 void onPhoneNotification(const String &app, const String &title, const String &message) {
   addNotification(NotifySource::Phone, app, title, message);
@@ -1606,6 +1726,14 @@ void dispatchFrame(JsonDocument &doc) {
     handleHomeServer(doc);
   } else if (strcmp(type, "hactl") == 0) {
     handleHa(doc);
+  } else if (strcmp(type, "fuel") == 0) {
+    handleFuel(doc);
+  } else if (strcmp(type, "sound") == 0) {
+    handleSoundFrame(doc);
+  } else if (strcmp(type, "say") == 0) {
+    handleSay(doc);
+  } else if (strcmp(type, "pcm") == 0) {
+    handlePcm(doc);
   } else if (strcmp(type, "wifi") == 0) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {
@@ -1790,6 +1918,8 @@ void setup() {
   ancsBegin("ESP32 Deck", onPhoneNotification);
   netBegin(onPcNotification, uiAramPacket);
   netSetLinkHandler(onLinkDatagram);
+  soundBegin();
+  loadSoundSettings();
   tzOffsetSec = prefs.getInt("tz", tzOffsetSec);
 #endif
 }
@@ -1805,6 +1935,9 @@ void loop() {
   netLoop();
   linkLoop();
   clockFromSystem();
+  timerTick();
+  soundLoop();
+  speechLoop();
   updatePcLink();
   updateScreenSleep();
   uiUpdateStandby();

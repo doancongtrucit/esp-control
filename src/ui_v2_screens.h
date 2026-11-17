@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break, HomeCtl };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break, HomeCtl, Timer, Ring };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -21,7 +21,9 @@ struct HomeApp {
   uint32_t to;
 };
 
-constexpr HomeApp HOME_APPS[8] = {
+constexpr int HOME_PAGES = 2;
+uint8_t homePage = 0;
+constexpr HomeApp HOME_APPS[8 * HOME_PAGES] = {
     {"Monitor", Icon::Monitor, Screen::Monitor, 0x30d158, 0x1a9e48},
     {"Controls", Icon::Controls, Screen::Controls, 0x0a84ff, 0x0060df},
     {"Info", Icon::Pie, Screen::Info, 0xffd60a, 0xf5a300},
@@ -30,6 +32,12 @@ constexpr HomeApp HOME_APPS[8] = {
     {"Standby", Icon::Clock, Screen::Standby, 0x64d2ff, 0x2b8fd8},
     {"Notify", Icon::Bell, Screen::Notify, 0xff375f, 0xe0244a},
     {"Settings", Icon::Gear, Screen::Settings, 0x8e8e93, 0x5c5c63},
+    // page 2
+    {"Timer", Icon::Timer, Screen::Timer, 0xff8787, 0xe03131},
+    {"Brief", Icon::Sun, Screen::Home, 0xffd43b, 0xf08c00},  // an action: the bridge speaks the morning brief
+    {"", Icon::Plus, Screen::Home, 0, 0}, {"", Icon::Plus, Screen::Home, 0, 0},
+    {"", Icon::Plus, Screen::Home, 0, 0}, {"", Icon::Plus, Screen::Home, 0, 0}, {"", Icon::Plus, Screen::Home, 0, 0},
+    {"", Icon::Plus, Screen::Home, 0, 0},
 };
 constexpr int NOTIFY_APP = 6;
 constexpr int STATUS_BAR_H = 26;
@@ -70,7 +78,7 @@ void drawHeaderV2(const char *title, bool homeButton) {
 void drawHeaderStatusV2() {
   // The banner covers the header; the Notifications header uses this area for HIDE.
   if (bannerActive || screen == Screen::Notify || screen == Screen::Home || screen == Screen::Standby ||
-      screen == Screen::Break)
+      screen == Screen::Break || screen == Screen::Ring)
     return;
   const bool stale = stats.everUpdated && millis() - stats.lastUpdateMs > STALE_AFTER_MS;
   const uint16_t dot = !stats.everUpdated ? T_DIVIDER : (stale ? T_DOWN : T_UP);
@@ -121,14 +129,18 @@ void drawHomeStatusBar() {
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_TEXT, T_BG);
   uiText(currentClockText(), 240, STATUS_BAR_H / 2, 2);
+  for (int i = 0; i < HOME_PAGES; ++i)  // launcher page dots; swipe to change
+    tft.fillCircle(150 + i * 12, STATUS_BAR_H / 2, 3, i == homePage ? T_TEXT : T_DIVIDER);
 }
 
-void drawHomeApp(int index) {
-  const CellRect c = gridCellIn(index, 4, 2, HOME_GRID_X, HOME_GRID_Y, HOME_GRID_W, HOME_GRID_H, 0);
+void drawHomeApp(int slot) {
+  const CellRect c = gridCellIn(slot, 4, 2, HOME_GRID_X, HOME_GRID_Y, HOME_GRID_W, HOME_GRID_H, 0);
+  const int index = homePage * 8 + slot;
   const HomeApp &app = HOME_APPS[index];
   const int ix = c.x + (c.w - APP_ICON) / 2;
   const int iy = c.y + 12;
   tft.fillRect(c.x, c.y, c.w, c.h, T_BG);
+  if (app.label[0] == '\0') return;  // an empty slot
   const uint16_t top = rgb565(app.from);
   const uint16_t bottom = rgb565(app.to);
   fillGradientRoundRect(tft, ix, iy, APP_ICON, APP_ICON, 13, top, bottom);
@@ -185,8 +197,17 @@ void drawHomeV2() {
 }
 
 void touchHomeV2(uint16_t x, uint16_t y) {
-  const int index = gridIndexIn(x, y, 4, 2, HOME_GRID_X, HOME_GRID_Y, HOME_GRID_W, HOME_GRID_H, 0);
-  if (index >= 0) uiShow(HOME_APPS[index].target);
+  const int slot = gridIndexIn(x, y, 4, 2, HOME_GRID_X, HOME_GRID_Y, HOME_GRID_W, HOME_GRID_H, 0);
+  if (slot < 0) return;
+  const HomeApp &app = HOME_APPS[homePage * 8 + slot];
+  if (strcmp(app.label, "Brief") == 0) {
+    JsonDocument doc;
+    doc["type"] = "brief";
+    sendFrame(doc);
+    ledFlashUntil = millis() + 300;
+    return;
+  }
+  if (app.label[0] != '\0') uiShow(app.target);
 }
 
 // ---------- Monitor ----------
@@ -243,11 +264,38 @@ void drawMonitorV2Static() {
   }
 }
 
+// What each Monitor row and box shows now, so a new frame repaints only what changed (no flicker).
+int monDrawnFill[4] = {-1, -1, -1, -1};  // -1: bar track not painted yet
+uint16_t monDrawnColor[4] = {};
+String monDrawnText[6];
+
+void monitorForgetDrawn() {
+  for (int &f : monDrawnFill) f = -1;
+  for (String &t : monDrawnText) t = "";
+}
+
 void drawMonitorRow(int row, float pct, const String &aux, const String &valueText = String()) {
   const int y = MON_ROW_Y[row];
-  tft.fillRoundRect(MON_BAR_X, y + 3, MON_BAR_W, 10, 5, T_TILE);
   const int fill = static_cast<int>((MON_BAR_W - 2) * clampPct(pct) / 100.0f);
-  if (fill > 0) tft.fillRoundRect(MON_BAR_X + 1, y + 4, fill, 8, 4, pct >= 80.0f ? T_ACCENT : T_ACCENT_2);
+  const uint16_t color = pct >= 80.0f ? T_ACCENT : T_ACCENT_2;
+  if (monDrawnFill[row] < 0) {
+    tft.fillRoundRect(MON_BAR_X, y + 3, MON_BAR_W, 10, 5, T_TILE);
+    monDrawnFill[row] = 0;
+  }
+  if (fill != monDrawnFill[row] || color != monDrawnColor[row]) {
+    // Paint the bar and the empty track side by side instead of erasing the whole bar first.
+    const int rest = MON_BAR_W - 2 - fill;
+    if (fill > 0) {
+      tft.fillRect(MON_BAR_X + 1 + max(0, fill - 4), y + 4, min(fill, 4), 8, T_TILE);  // clean rounded end
+      tft.fillRoundRect(MON_BAR_X + 1, y + 4, fill, 8, 4, color);
+    }
+    if (rest > 0) tft.fillRect(MON_BAR_X + 1 + fill, y + 4, rest, 8, T_TILE);
+    monDrawnFill[row] = fill;
+    monDrawnColor[row] = color;
+  }
+  const String text = (valueText.length() ? valueText : fmtValue(pct) + "%") + "|" + aux;
+  if (text == monDrawnText[row]) return;
+  monDrawnText[row] = text;
   tft.fillRect(MON_BAR_X + MON_BAR_W + 4, y - 2, UI_SCREEN_W - MON_BAR_X - MON_BAR_W - 4, 20, T_SURFACE);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_INK, T_SURFACE);
@@ -258,6 +306,9 @@ void drawMonitorRow(int row, float pct, const String &aux, const String &valueTe
 
 void drawMonitorBox(int index, const String &value, const String &detail) {
   const int x = 10 + index * 153;
+  const String key = value + "|" + detail;
+  if (key == monDrawnText[4 + index]) return;
+  monDrawnText[4 + index] = key;
   tft.fillRect(x + 6, MON_BOX_Y + 22, 135, 46, T_TILE);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(T_INK, T_TILE);
@@ -268,6 +319,7 @@ void drawMonitorBox(int index, const String &value, const String &detail) {
 
 void drawServerStatus(const String &value, uint16_t color, const String &detail) {
   const int x = 10 + 153;
+  monDrawnText[5] = "";  // box 1 now shows the server status, not what drawMonitorBox painted
   tft.fillRect(x + 6, MON_BOX_Y + 22, 135, 46, T_TILE);
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(color, T_TILE);
@@ -453,7 +505,7 @@ struct InfoTabSpec {
   uint32_t line;  // underline color of the active tab
 };
 constexpr InfoTabSpec INFO_TAB_SPECS[INFO_TABS] = {
-    {"Gold", Icon::Gold, 0xffd60a},   {"Coin", Icon::Coin, 0xff9f0a},          {"Stock", Icon::Trend, 0x30d158},
+    {"Prices", Icon::Gold, 0xffd60a},   {"Coin", Icon::Coin, 0xff9f0a},          {"Stock", Icon::Trend, 0x30d158},
     {"Weather", Icon::Cloud, 0x64d2ff}, {"Date", Icon::Calendar, 0xff375f},
     {"Health", Icon::Activity, 0x30d158},
 };
@@ -487,28 +539,31 @@ void drawInfoEmpty(const char *message) {
 
 // ---------- Info: Gold ----------
 
+// Gold (thousand VND per chi) on top, Petrolimex fuel (VND per litre) below.
 void drawGoldTab() {
   constexpr int colBuy = 180;
   constexpr int colSell = 250;
   constexpr int colChange = 312;
   constexpr int headY = INFO_Y;
-  constexpr int rowY0 = headY + 18;
-  constexpr int rowH = 21;
+  const bool withFuel = fuel.has && fuel.count > 0;
+  const int goldRows = withFuel ? min<int>(info.goldCount, 3) : info.goldCount;
+  const int rowH = withFuel ? 19 : 21;
+  const int rowY0 = headY + 16;
 
   tft.setTextColor(T_MUTED, T_CARD);
   tft.setTextDatum(ML_DATUM);
-  uiText("x1000 VND / chi", 10, headY + 9, 1);
+  uiText(withFuel ? "GOLD  x1000 VND/chi" : "x1000 VND / chi", 10, headY + 8, 1);
   tft.setTextDatum(MR_DATUM);
-  uiText("BUY", colBuy, headY + 9, 1);
-  uiText("SELL", colSell, headY + 9, 1);
-  uiText("+/-", colChange, headY + 9, 1);
+  uiText("BUY", colBuy, headY + 8, 1);
+  uiText("SELL", colSell, headY + 8, 1);
+  uiText("+/-", colChange, headY + 8, 1);
 
-  if (!info.hasGold) {
+  if (!info.hasGold && !withFuel) {
     drawInfoEmpty("No data yet");
     return;
   }
 
-  for (int i = 0; i < info.goldCount; ++i) {
+  for (int i = 0; i < goldRows; ++i) {
     const int y = rowY0 + i * rowH;
     const uint16_t bg = (i % 2 == 0) ? T_CARD_ALT : T_CARD;
     const int mid = y + rowH / 2;
@@ -525,18 +580,46 @@ void drawGoldTab() {
     uiText(change > 0 ? "+" + fmtPrice(change) : fmtPrice(change), colChange, mid, 2);
   }
 
-  constexpr int footY = 226;
+  if (withFuel) {
+    const int fuelHead = rowY0 + goldRows * rowH + 4;
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(T_MUTED, T_CARD);
+    uiText("FUEL  VND/litre  zone " + String(fuel.zone), 10, fuelHead + 6, 1);
+    tft.setTextDatum(MR_DATUM);
+    uiText("PRICE", colSell, fuelHead + 6, 1);
+    uiText("+/-", colChange, fuelHead + 6, 1);
+    constexpr int fuelRowH = 17;
+    const int fuelY0 = fuelHead + 13;
+    const int fit = (UI_SCREEN_H - 15 - fuelY0) / fuelRowH;
+    for (int i = 0; i < min<int>(fuel.count, fit); ++i) {
+      const int y = fuelY0 + i * fuelRowH;
+      const uint16_t bg = (i % 2 == 0) ? T_CARD_ALT : T_CARD;
+      tft.fillRect(0, y, UI_SCREEN_W, fuelRowH, bg);
+      drawViText(tft, 10, y + 1, fitViText(fuel.name[i], 150), T_TEXT, bg);
+      tft.setTextDatum(MR_DATUM);
+      tft.setTextColor(T_TEXT, bg);
+      uiTextIn(UiFont::Small, fuelPriceText(fuel.price[i]), colSell, y + fuelRowH / 2);
+      const long change = fuel.change[i];
+      tft.setTextColor(change > 0 ? T_UP : (change < 0 ? T_DOWN : T_MUTED), bg);
+      uiTextIn(UiFont::Small, change > 0 ? "+" + fuelPriceText(change) : fuelPriceText(change), colChange,
+               y + fuelRowH / 2);
+    }
+  }
+
+  const int footY = withFuel ? UI_SCREEN_H - 7 : 226;
+  const uint8_t footFont = withFuel ? 1 : 2;
   tft.setTextDatum(ML_DATUM);
   if (!isnan(info.xau)) {
     const String world = "World $" + String(info.xau, 1) + "/oz ";
     tft.setTextColor(T_MUTED, T_CARD);
-    uiText(world, 10, footY, 2);
+    uiText(world, 10, footY, footFont);
     tft.setTextColor(info.xauChange > 0 ? T_UP : (info.xauChange < 0 ? T_DOWN : T_MUTED), T_CARD);
-    uiText((info.xauChange > 0 ? "+" : "") + String(info.xauChange, 1), 10 + uiTextWidth(world, 2), footY, 2);
+    uiText((info.xauChange > 0 ? "+" : "") + String(info.xauChange, 1), 10 + uiTextWidth(world, footFont), footY,
+           footFont);
   }
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(T_MUTED, T_CARD);
-  uiText("Updated " + info.goldTime, colChange, footY, 2);
+  uiText("Updated " + (info.goldTime.length() ? info.goldTime : fuel.time), colChange, footY, footFont);
 }
 
 // ---------- Info: Calendar ----------
@@ -970,6 +1053,7 @@ void drawBreakV2() {
 }
 
 void openBreak(BreakKind kind) {
+  playSound(Sound::Reminder);
   breakKind = kind;
   if (screen != Screen::Break) breakReturnTo = screen;
   if (kind == BreakKind::Eye) breakEyeUntil = millis() + EYE_REST_MS;
@@ -1177,11 +1261,12 @@ void drawPlaceholderV2(const char *title) {
 
 // ---------- Settings ----------
 
-enum SettingsTab : uint8_t { SET_DISPLAY, SET_NOTIFY, SET_CONNECT, SET_DEVICE, SET_TABS };
+enum SettingsTab : uint8_t { SET_DISPLAY, SET_NOTIFY, SET_SOUND, SET_CONNECT, SET_DEVICE, SET_TABS };
 uint8_t settingsTab = SET_DISPLAY;
 constexpr InfoTabSpec SET_TAB_SPECS[SET_TABS] = {
     {"Display", Icon::Sun, 0xffd60a},
     {"Notify", Icon::Bell, 0xff375f},
+    {"Sound", Icon::VolUp, 0x30d158},
     {"Connect", Icon::Wifi, 0x0a84ff},
     {"Device", Icon::Chip, 0x8e8e93},
 };
@@ -1340,6 +1425,23 @@ void drawSettingsV2() {
       drawQuietBox(QUIET_END_X, settings.quietEnd, settings.quietOn);
       for (int i = 0; i < NOTIFY_APP_COUNT; ++i) drawAppChip(i);
       break;
+    case SET_SOUND: {
+      static const char *const VOLUME_LABELS[SOUND_VOLUMES] = {"Off", "Low", "Mid", "High"};
+      drawSetRow(0, "Volume");
+      drawSegments(0, VOLUME_LABELS, SOUND_VOLUMES, soundSettings.volume, false);
+      drawSwitchRow(1, "Timers", soundGroupOn(SoundGroup::Timer), SET_ROW_X, SET_HALF_W);
+      drawSwitchRow(1, "Claude", soundGroupOn(SoundGroup::Claude), SET_RIGHT_X, SET_HALF_W);
+      drawSwitchRow(2, "Notify", soundGroupOn(SoundGroup::Notify), SET_ROW_X, SET_HALF_W);
+      drawSwitchRow(2, "Remind", soundGroupOn(SoundGroup::Reminder), SET_RIGHT_X, SET_HALF_W);
+      drawSwitchRow(3, "Alerts", soundGroupOn(SoundGroup::Alert), SET_ROW_X, SET_HALF_W);
+      drawSwitchRow(3, "Clicks", soundGroupOn(SoundGroup::Click), SET_RIGHT_X, SET_HALF_W);
+      drawActionRow(4, "Tap: test sound", T_TEXT, SET_ROW_X, SET_HALF_W);
+      tft.setTextDatum(ML_DATUM);
+      tft.setTextColor(T_MUTED, T_CARD);
+      uiText("Quiet hours mute all", SET_RIGHT_X + 4, setRowY(4) + 9, 1);
+      uiText("but timers and alarms.", SET_RIGHT_X + 4, setRowY(4) + 23, 1);
+      break;
+    }
     case SET_CONNECT:
       drawConnectValues();
       drawActionRow(4, "Hold: forget iPhone", T_DOWN);
@@ -1439,6 +1541,28 @@ void touchSettingsV2(uint16_t x, uint16_t y) {
         }
       }
       break;
+    case SET_SOUND: {
+      changed = false;
+      if (row == 0 && segmentAt(x, SOUND_VOLUMES) >= 0) {
+        soundSettings.volume = segmentAt(x, SOUND_VOLUMES);
+        soundPlay(Sound::Test, soundSettings.volume);  // a preview at the new volume
+      } else if (row >= 1 && row <= 3) {
+        static const SoundGroup GROUPS[3][2] = {{SoundGroup::Timer, SoundGroup::Claude},
+                                                {SoundGroup::Notify, SoundGroup::Reminder},
+                                                {SoundGroup::Alert, SoundGroup::Click}};
+        soundSettings.groups ^= 1u << static_cast<uint8_t>(GROUPS[row - 1][right ? 1 : 0]);
+      } else if (row == 4 && !right) {
+        soundPlay(Sound::Test, soundSettings.volume);
+        waitForRelease();
+        return;
+      } else {
+        return;
+      }
+      saveSoundSettings();
+      fullRedrawRequested = true;
+      waitForRelease();
+      return;
+    }
     case SET_CONNECT:
       changed = false;
       if (row == 4 && holdRect(SET_ROW_X, 4, SET_ROW_W)) {
@@ -2106,6 +2230,19 @@ void touchClaudeV2(uint16_t x, uint16_t y) {
 void uiClaudeFrame(const ClaudeState &next) {
   const bool newAsk = next.askId != 0 && next.askId != claude.askId;
   const bool askGone = next.askId == 0 && claude.askId != 0;
+  if (newAsk) {
+    playSound(Sound::ClaudeAsk);
+  } else {
+    for (uint8_t i = 0; i < next.count; ++i) {
+      for (uint8_t j = 0; j < claude.count; ++j) {
+        if (next.rows[i].name != claude.rows[j].name) continue;
+        if (claude.rows[j].state == ClaudeRunState::Running && next.rows[i].state == ClaudeRunState::Done)
+          playSound(Sound::ClaudeDone);
+        else if (claude.rows[j].fails < CLAUDE_FAIL_BADGE && next.rows[i].fails >= CLAUDE_FAIL_BADGE)
+          playSound(Sound::ClaudeFail);
+      }
+    }
+  }
   claude = next;
   if (newAsk) {
     claudeAskSinceMs = millis();
@@ -2344,6 +2481,364 @@ void uiHaChanged() {
   if (screen == Screen::HomeCtl) fullRedrawRequested = true;
 }
 
+// ---------- Timer app: countdown, Pomodoro, alarm (runs on the deck, no PC needed) ----------
+
+enum TimerTab : uint8_t { TM_TIMER, TM_POMO, TM_ALARM, TM_TABS };
+uint8_t timerTab = TM_TIMER;
+constexpr InfoTabSpec TIMER_TAB_SPECS[TM_TABS] = {
+    {"Timer", Icon::Timer, 0xff9f0a}, {"Pomodoro", Icon::Activity, 0xff375f}, {"Alarm", Icon::Bell, 0x0a84ff}};
+
+// Countdown
+uint32_t cdTotalS = 5 * 60, cdLeftS = 5 * 60, cdEndMs = 0;
+bool cdRunning = false;
+// Pomodoro
+PomoPhase pomoPhase = PomoPhase::Focus;
+uint8_t pomoDone = 0;
+uint32_t pomoLeftS = POMO_FOCUS_S, pomoEndMs = 0;
+bool pomoRunning = false;
+// Alarm (kept in flash)
+bool alarmOn = false;
+uint8_t alarmH = 7, alarmM = 0;
+AlarmRepeat alarmRepeat = AlarmRepeat::Daily;
+long alarmFiredKey = -1;
+bool alarmLoaded = false;
+// Ringing
+enum class RingKind : uint8_t { Countdown, Pomo, Alarm };
+RingKind ringKind = RingKind::Countdown;
+Screen ringReturnTo = Screen::Home;
+uint32_t ringSinceMs = 0;
+int timerDrawnSecond = -1;
+constexpr uint32_t RING_MAX_MS = 3 * 60 * 1000UL;
+
+constexpr int TM_BIG_Y = 104;
+constexpr uint32_t CD_PRESETS[6] = {1, 3, 5, 10, 15, 30};
+
+uint32_t secondsLeft(bool running, uint32_t endMs, uint32_t leftS) {
+  if (!running) return leftS;
+  const int32_t ms = static_cast<int32_t>(endMs - millis());
+  return ms <= 0 ? 0 : (static_cast<uint32_t>(ms) + 999) / 1000;
+}
+
+bool timerRinging() { return screen == Screen::Ring; }
+
+void loadAlarm() {
+  if (alarmLoaded) return;
+  alarmLoaded = true;
+  alarmOn = prefs.getBool("alOn", false);
+  alarmH = prefs.getUChar("alH", 7);
+  alarmM = prefs.getUChar("alM", 0);
+  alarmRepeat = static_cast<AlarmRepeat>(prefs.getUChar("alRep", 1));
+}
+
+void saveAlarm() {
+  prefs.putBool("alOn", alarmOn);
+  prefs.putUChar("alH", alarmH);
+  prefs.putUChar("alM", alarmM);
+  prefs.putUChar("alRep", static_cast<uint8_t>(alarmRepeat));
+}
+
+void drawTimerButton(const CellRect &c, const String &label, uint16_t bg, uint16_t fg = T_TEXT) {
+  tft.fillRoundRect(c.x, c.y, c.w, c.h, 10, bg);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(fg, bg);
+  uiTextIn(UiFont::BodyBold, label, c.x + c.w / 2, c.y + c.h / 2);
+}
+
+CellRect timerButtonCell(int i, int n) { return gridCellIn(i, n, 1, 8, 188, UI_SCREEN_W - 16, 44, 6); }
+
+// The big mm:ss and its progress bar; repainted every second while running.
+void drawTimerBig() {
+  uint32_t left = 0, total = 1;
+  uint16_t color = T_TEXT;
+  if (timerTab == TM_TIMER) {
+    left = secondsLeft(cdRunning, cdEndMs, cdLeftS);
+    total = cdTotalS;
+    color = cdRunning ? T_ACCENT : T_TEXT;
+  } else if (timerTab == TM_POMO) {
+    left = secondsLeft(pomoRunning, pomoEndMs, pomoLeftS);
+    total = pomoSeconds(pomoPhase);
+    color = pomoPhase == PomoPhase::Focus ? T_ACCENT : T_UP;
+    if (!pomoRunning) color = T_TEXT;
+  } else {
+    return;
+  }
+  tft.fillRect(20, TM_BIG_Y - 23, UI_SCREEN_W - 40, 51, T_CARD);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(color, T_CARD);
+  uiText(timerText(left), UI_SCREEN_W / 2, TM_BIG_Y, 6);
+  const int barW = UI_SCREEN_W - 80;
+  const int done = total ? barW * (total - min(left, total)) / total : 0;
+  tft.fillRoundRect(40, TM_BIG_Y + 34, barW, 6, 3, T_LINE);
+  if (done > 0) tft.fillRoundRect(40, TM_BIG_Y + 34, max(6, done), 6, 3, color);
+  timerDrawnSecond = static_cast<int>(left);
+}
+
+void drawCountdownTab() {
+  drawTimerBig();
+  for (int i = 0; i < 6; ++i) {
+    const CellRect c = gridCellIn(i, 6, 1, 8, 150, UI_SCREEN_W - 16, 28, 4);
+    const bool on = cdTotalS == CD_PRESETS[i] * 60;
+    tft.fillRoundRect(c.x, c.y, c.w, c.h, 8, on ? T_LINK : T_CARD_ALT);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(on ? T_TEXT : T_MUTED, on ? T_LINK : T_CARD_ALT);
+    uiTextIn(UiFont::Small, String(CD_PRESETS[i]) + "m", c.x + c.w / 2, c.y + c.h / 2);
+  }
+  drawTimerButton(timerButtonCell(0, 4), "-1m", T_CARD_ALT);
+  drawTimerButton(timerButtonCell(1, 4), cdRunning ? "PAUSE" : "START", cdRunning ? T_ACCENT : T_UP, T_BG);
+  drawTimerButton(timerButtonCell(2, 4), "+1m", T_CARD_ALT);
+  drawTimerButton(timerButtonCell(3, 4), "RESET", T_CARD_ALT);
+}
+
+void drawPomoTab() {
+  const char *phase = pomoPhase == PomoPhase::Focus ? "FOCUS" : (pomoPhase == PomoPhase::ShortBreak ? "BREAK" : "LONG BREAK");
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(pomoPhase == PomoPhase::Focus ? T_ACCENT : T_UP, T_CARD);
+  uiTextIn(UiFont::Small, phase, 14, INFO_Y + 9);
+  for (int i = 0; i < POMO_ROUNDS; ++i) {  // finished focus rounds
+    const int x = UI_SCREEN_W - 20 - (POMO_ROUNDS - 1 - i) * 14;
+    if (i < pomoDone) tft.fillCircle(x, INFO_Y + 9, 4, T_ACCENT);
+    else tft.drawCircle(x, INFO_Y + 9, 4, T_MUTED);
+  }
+  drawTimerBig();
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_MUTED, T_CARD);
+  uiTextIn(UiFont::Small, "25 min focus  |  5 min break  |  15 min after 4", UI_SCREEN_W / 2, 164);
+  drawTimerButton(timerButtonCell(0, 3), pomoRunning ? "PAUSE" : "START", pomoRunning ? T_ACCENT : T_UP, T_BG);
+  drawTimerButton(timerButtonCell(1, 3), "SKIP", T_CARD_ALT);
+  drawTimerButton(timerButtonCell(2, 3), "RESET", T_CARD_ALT);
+}
+
+constexpr int AL_SWITCH_Y = INFO_Y + 4;
+constexpr int AL_BIG_Y = 124;
+constexpr int AL_ADJ_Y = 154;
+constexpr int AL_REP_Y = 192;
+
+void drawAlarmTab() {
+  loadAlarm();
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(T_TEXT, T_CARD);
+  uiTextIn(UiFont::BodyBold, "ALARM", 14, AL_SWITCH_Y + 12);
+  tft.setTextColor(T_MUTED, T_CARD);
+  uiTextIn(UiFont::Small, alarmOn ? "rings on the deck" : "off", 80, AL_SWITCH_Y + 12);
+  const int sx = UI_SCREEN_W - 58, sy = AL_SWITCH_Y + 2;
+  tft.fillRoundRect(sx, sy, 44, 22, 11, alarmOn ? T_UP : T_LINE);
+  tft.fillCircle(alarmOn ? sx + 33 : sx + 11, sy + 11, 8, T_TEXT);
+  char text[6];
+  snprintf(text, sizeof(text), "%02u:%02u", alarmH, alarmM);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(alarmOn ? T_TEXT : T_MUTED, T_CARD);
+  uiText(text, UI_SCREEN_W / 2, AL_BIG_Y, 6);
+  static const char *const ADJ[4] = {"H -", "H +", "M -", "M +"};
+  for (int i = 0; i < 4; ++i) drawTimerButton(gridCellIn(i, 4, 1, 8, AL_ADJ_Y, UI_SCREEN_W - 16, 30, 6), ADJ[i], T_CARD_ALT);
+  static const char *const REP[3] = {"Once", "Daily", "Mon-Fri"};
+  for (int i = 0; i < 3; ++i) {
+    const CellRect c = gridCellIn(i, 3, 1, 8, AL_REP_Y, UI_SCREEN_W - 16, 40, 6);
+    const bool on = static_cast<int>(alarmRepeat) == i;
+    drawTimerButton(c, REP[i], on ? T_LINK : T_CARD_ALT, on ? T_TEXT : T_MUTED);
+  }
+}
+
+void drawTimerV2() {
+  drawHeaderV2("TIMER", true);
+  drawTabStrip(TIMER_TAB_SPECS, TM_TABS, timerTab);
+  tft.fillRect(0, INFO_Y, UI_SCREEN_W, UI_SCREEN_H - INFO_Y, T_CARD);
+  if (timerTab == TM_TIMER) drawCountdownTab();
+  else if (timerTab == TM_POMO) drawPomoTab();
+  else drawAlarmTab();
+}
+
+void startCountdown() {
+  if (cdLeftS == 0) cdLeftS = cdTotalS;
+  cdEndMs = millis() + cdLeftS * 1000UL;
+  cdRunning = true;
+}
+
+void touchTimerV2(uint16_t x, uint16_t y) {
+  const int tab = gridIndexIn(x, y, TM_TABS, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
+  if (tab >= 0) {
+    if (tab != timerTab) {
+      timerTab = tab;
+      fullRedrawRequested = true;
+    }
+    return;
+  }
+  if (timerTab == TM_TIMER) {
+    if (y >= 150 && y < 178) {  // presets
+      const int i = gridIndexIn(x, y, 6, 1, 8, 150, UI_SCREEN_W - 16, 28, 4);
+      if (i < 0) return;
+      cdTotalS = cdLeftS = CD_PRESETS[i] * 60;
+      cdRunning = false;
+    } else if (y >= 188) {
+      const int b = gridIndexIn(x, y, 4, 1, 8, 188, UI_SCREEN_W - 16, 44, 6);
+      const uint32_t left = secondsLeft(cdRunning, cdEndMs, cdLeftS);
+      if (b == 0 || b == 2) {  // -1 min / +1 min, also while running
+        const int32_t next = static_cast<int32_t>(left) + (b == 2 ? 60 : -60);
+        cdLeftS = static_cast<uint32_t>(constrain(next, 0, 24 * 3600 - 1));
+        if (cdLeftS > cdTotalS) cdTotalS = cdLeftS;
+        if (cdRunning) cdEndMs = millis() + cdLeftS * 1000UL;
+        if (cdLeftS == 0) cdRunning = false;
+      } else if (b == 1) {
+        if (cdRunning) {
+          cdLeftS = left;
+          cdRunning = false;
+        } else {
+          startCountdown();
+        }
+      } else if (b == 3) {
+        cdRunning = false;
+        cdLeftS = cdTotalS;
+      }
+    } else {
+      return;
+    }
+  } else if (timerTab == TM_POMO) {
+    if (y < 188) return;
+    const int b = gridIndexIn(x, y, 3, 1, 8, 188, UI_SCREEN_W - 16, 44, 6);
+    if (b == 0) {
+      if (pomoRunning) {
+        pomoLeftS = secondsLeft(true, pomoEndMs, 0);
+        pomoRunning = false;
+      } else {
+        pomoEndMs = millis() + pomoLeftS * 1000UL;
+        pomoRunning = true;
+      }
+    } else if (b == 1) {
+      pomoPhase = pomoNext(pomoPhase, pomoDone);
+      pomoLeftS = pomoSeconds(pomoPhase);
+      if (pomoRunning) pomoEndMs = millis() + pomoLeftS * 1000UL;
+    } else if (b == 2) {
+      pomoRunning = false;
+      pomoPhase = PomoPhase::Focus;
+      pomoDone = 0;
+      pomoLeftS = POMO_FOCUS_S;
+    }
+  } else {
+    loadAlarm();
+    if (y >= AL_SWITCH_Y && y < AL_SWITCH_Y + 28 && x > UI_SCREEN_W - 80) {
+      alarmOn = !alarmOn;
+    } else if (y >= AL_ADJ_Y && y < AL_ADJ_Y + 30) {
+      const int b = gridIndexIn(x, y, 4, 1, 8, AL_ADJ_Y, UI_SCREEN_W - 16, 30, 6);
+      if (b == 0) alarmH = (alarmH + 23) % 24;
+      if (b == 1) alarmH = (alarmH + 1) % 24;
+      if (b == 2) alarmM = (alarmM + 55) % 60;
+      if (b == 3) alarmM = (alarmM + 5) % 60;
+      if (b >= 0) alarmOn = true;
+    } else if (y >= AL_REP_Y && y < AL_REP_Y + 40) {
+      const int b = gridIndexIn(x, y, 3, 1, 8, AL_REP_Y, UI_SCREEN_W - 16, 40, 6);
+      if (b < 0) return;
+      alarmRepeat = static_cast<AlarmRepeat>(b);
+    } else {
+      return;
+    }
+    saveAlarm();
+    alarmFiredKey = -1;
+  }
+  ledFlashUntil = millis() + 120;
+  fullRedrawRequested = true;
+  waitForRelease();
+}
+
+// ---- ringing ----
+
+void ring(RingKind kind) {
+  if (kind == RingKind::Alarm) playSound(Sound::Alarm);
+  else if (kind == RingKind::Pomo) playSound(pomoPhase == PomoPhase::Focus ? Sound::BreakDone : Sound::FocusDone);
+  else playSound(Sound::TimerDone);
+  ringKind = kind;
+  if (screen != Screen::Ring) ringReturnTo = screen == Screen::Standby ? Screen::Home : screen;
+  ringSinceMs = millis();
+  bannerActive = false;
+  noteActivity();
+  uiShow(Screen::Ring);
+}
+
+void drawRingV2() {
+  tft.fillScreen(T_BG);
+  String title = "TIME'S UP", detail = timerText(cdTotalS) + " timer", left = "+5 MIN", right = "DONE";
+  if (ringKind == RingKind::Pomo) {
+    const bool focusNext = pomoPhase == PomoPhase::Focus;
+    title = focusNext ? "BREAK OVER" : "FOCUS DONE";
+    detail = focusNext ? "Ready for the next focus?" : String("Take a ") + (pomoSeconds(pomoPhase) / 60) + " min break";
+    left = "STOP";
+    right = focusNext ? "START FOCUS" : "START BREAK";
+  } else if (ringKind == RingKind::Alarm) {
+    char text[16];
+    snprintf(text, sizeof(text), "%02u:%02u", alarmH, alarmM);
+    title = "ALARM";
+    detail = text;
+    left = "SNOOZE 5";
+  }
+  drawIcon(tft, Icon::Bell, UI_SCREEN_W / 2 - 22, 18, 44, T_GOLD, T_BG);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(T_TEXT, T_BG);
+  uiText(title, UI_SCREEN_W / 2, 98, 4);
+  tft.setTextColor(T_MUTED, T_BG);
+  uiTextIn(UiFont::Body, detail, UI_SCREEN_W / 2, 134);
+  drawTimerButton(gridCellIn(0, 2, 1, 16, 172, UI_SCREEN_W - 32, 50, 10), left, T_CARD);
+  drawTimerButton(gridCellIn(1, 2, 1, 16, 172, UI_SCREEN_W - 32, 50, 10), right, T_UP, T_BG);
+}
+
+void endRing() {
+  soundStop();
+  uiShow(ringReturnTo);
+}
+
+void touchRingV2(uint16_t x, uint16_t y) {
+  if (y < 172) return;
+  const bool leftButton = x < UI_SCREEN_W / 2;
+  if (ringKind == RingKind::Pomo) {
+    if (!leftButton) {  // start the phase that is now due
+      pomoLeftS = pomoSeconds(pomoPhase);
+      pomoEndMs = millis() + pomoLeftS * 1000UL;
+      pomoRunning = true;
+    }
+  } else if (leftButton) {  // +5 min / snooze: a 5 minute countdown
+    cdTotalS = cdLeftS = 5 * 60;
+    startCountdown();
+  }
+  waitForRelease();
+  endRing();
+}
+
+// Every loop: counts down, rings, checks the alarm, repaints the big time.
+void timerTick() {
+  static uint32_t lastMs = 0;
+  if (millis() - lastMs < 200) return;
+  lastMs = millis();
+  loadAlarm();
+  if (cdRunning && secondsLeft(true, cdEndMs, 0) == 0) {
+    cdRunning = false;
+    cdLeftS = cdTotalS;
+    ring(RingKind::Countdown);
+  }
+  if (pomoRunning && secondsLeft(true, pomoEndMs, 0) == 0) {
+    pomoRunning = false;
+    pomoPhase = pomoNext(pomoPhase, pomoDone);
+    pomoLeftS = pomoSeconds(pomoPhase);
+    ring(RingKind::Pomo);
+  }
+  int d, m, y;
+  const int hour = clockHour();
+  if (alarmOn && hour >= 0 && deckDate(d, m, y)) {
+    const uint32_t secs = (stats.clockSecondsAtSync + (millis() - stats.clockSyncMs) / 1000UL) % 86400UL;
+    if (alarmDue(alarmOn, alarmH, alarmM, alarmRepeat, hour, (secs / 60) % 60, dayOfWeek(d, m, y),
+                 y * 372L + m * 31L + d, alarmFiredKey)) {
+      if (alarmRepeat == AlarmRepeat::Once) {
+        alarmOn = false;
+        saveAlarm();
+      }
+      ring(RingKind::Alarm);
+    }
+  }
+  if (screen == Screen::Ring && millis() - ringSinceMs > RING_MAX_MS) endRing();
+  if (screen == Screen::Timer && (timerTab == TM_TIMER || timerTab == TM_POMO)) {
+    const bool running = timerTab == TM_TIMER ? cdRunning : pomoRunning;
+    const uint32_t left = timerTab == TM_TIMER ? secondsLeft(cdRunning, cdEndMs, cdLeftS)
+                                               : secondsLeft(pomoRunning, pomoEndMs, pomoLeftS);
+    if (running && static_cast<int>(left) != timerDrawnSecond) drawTimerBig();
+  }
+}
+
 // ---------- Router ----------
 
 void uiRenderFullV2() {
@@ -2351,6 +2846,7 @@ void uiRenderFullV2() {
   switch (screen) {
     case Screen::Home: drawHomeV2(); break;
     case Screen::Monitor:
+      monitorForgetDrawn();
       drawMonitorV2Static();
       drawMonitorV2Dynamic();
       break;
@@ -2364,6 +2860,8 @@ void uiRenderFullV2() {
     case Screen::Aram: drawAramV2(); break;
     case Screen::Break: drawBreakV2(); break;
     case Screen::HomeCtl: drawHaV2(); break;
+    case Screen::Timer: drawTimerV2(); break;
+    case Screen::Ring: drawRingV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -2401,7 +2899,7 @@ void uiRenderDynamicV2() {
       drawHomeFooter();
       drawnHomeKey = homeChromeKey();
     }
-    if (drawnNotifyVersion != notifyStore.version()) {
+    if (drawnNotifyVersion != notifyStore.version() && homePage == 0) {
       drawHomeApp(NOTIFY_APP);
       if (bannerActive) drawBannerV2();  // the top app row runs under the banner
     }
@@ -2409,6 +2907,7 @@ void uiRenderDynamicV2() {
 }
 
 void uiHandleTouchV2(uint16_t x, uint16_t y) {
+  playSound(Sound::Click);
   if (bannerActive && y < BANNER_H) {
     bannerActive = false;
     uiShow(Screen::Notify);
@@ -2416,6 +2915,10 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
   }
   if (screen == Screen::Break) {
     touchBreakV2(x, y);
+    return;
+  }
+  if (screen == Screen::Ring) {
+    touchRingV2(x, y);
     return;
   }
   if (screen == Screen::Standby) {
@@ -2443,6 +2946,7 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Settings: touchSettingsV2(x, y); break;
     case Screen::Claude: touchClaudeV2(x, y); break;
     case Screen::HomeCtl: touchHaV2(x, y); break;
+    case Screen::Timer: touchTimerV2(x, y); break;
     default: break;
   }
 }
@@ -2456,12 +2960,20 @@ void uiOpenForShot(const char *name, int tab) {
                  {"info", Screen::Info},       {"claude", Screen::Claude},   {"aitools", Screen::AiTools},
                  {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings},
                  {"aram", Screen::Aram},       {"break", Screen::Break},
-                 {"ha", Screen::HomeCtl}};
+                 {"ha", Screen::HomeCtl},      {"timer", Screen::Timer},
+                 {"ring", Screen::Ring}};
   for (const auto &entry : SCREENS) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }
   if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
   if (tab >= 0 && screen == Screen::Monitor) monitorTab = tab % MON_TABS;
+  if (tab >= 0 && screen == Screen::Timer) timerTab = tab % TM_TABS;
+  if (tab >= 0 && screen == Screen::Home) homePage = tab % HOME_PAGES;
+  if (screen == Screen::Ring) {
+    ringKind = static_cast<RingKind>(tab < 0 ? 0 : tab % 3);
+    ringReturnTo = Screen::Home;
+    ringSinceMs = millis();
+  }
   if (screen == Screen::HomeCtl) {  // tab 9 opens the air conditioner card, else a page
     haAcOpen = tab == 9;
     if (tab >= 0 && tab != 9) haPage = tab;
@@ -2482,6 +2994,8 @@ void uiSwipeV2(int step) {
   switch (screen) {
     case Screen::Info: infoTab = (infoTab + INFO_TABS + step) % INFO_TABS; break;
     case Screen::Monitor: monitorTab = (monitorTab + MON_TABS + step) % MON_TABS; break;
+    case Screen::Timer: timerTab = (timerTab + TM_TABS + step) % TM_TABS; break;
+    case Screen::Home: homePage = (homePage + HOME_PAGES + step) % HOME_PAGES; break;
     case Screen::HomeCtl:
       if (haAcOpen || haPages() < 2) return;
       haPage = (haPage + haPages() + step) % haPages();
@@ -2498,7 +3012,11 @@ void uiSwipeV2(int step) {
   fullRedrawRequested = true;
 }
 
+bool homeServerWasOnline = false;
+
 void uiHomeServerChanged() {
+  if (homeServerWasOnline && homeServer.has && !homeServer.online) playSound(Sound::Alert);
+  homeServerWasOnline = homeServer.has && homeServer.online;
   if (screen == Screen::Monitor && monitorTab == MON_SERVER) drawServerDynamic();
 }
 

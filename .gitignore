@@ -33,4 +33,5 @@ src/standby_image.h
 host/device_state.json
 host/claude_stats.json
 host/activity_state.json
+host/fuel_state.json
 host/activity_state.tmp

@@ -7,3 +7,6 @@ winrt-Windows.Foundation; sys_platform == "win32"
 winrt-Windows.Foundation.Collections; sys_platform == "win32"
 winrt-Windows.UI.Notifications; sys_platform == "win32"
 winrt-Windows.UI.Notifications.Management; sys_platform == "win32"
+# Vietnamese speech on the deck speaker (notify API "say"): text goes to Microsoft's online voices
+edge-tts
+miniaudio

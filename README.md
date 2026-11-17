@@ -14,9 +14,10 @@ A 2.8-inch touch deck for your desk. It shows your PC at a glance, runs macros, 
 | :---: | :---: | :---: |
 | <img src="docs/media/screens/monitor.png" width="260"><br>**Monitor** — CPU, RAM, GPU, VRAM, network, disk | <img src="docs/media/screens/controls-0.png" width="260"><br>**Controls** — 18 macros on 3 pages | <img src="docs/media/screens/monitor-1.png" width="260"><br>**Home server** — your Home Assistant machine |
 | <img src="docs/media/screens/claude-0.png" width="260"><br>**Claude Code** — every session at a glance | <img src="docs/media/screens/claude-1.png" width="260"><br>**Usage** — tokens, estimated cost, 5-hour window | <img src="docs/media/screens/claude-2.png" width="260"><br>**Stats** — replies per hour, answers today |
-| <img src="docs/media/screens/info-0.png" width="260"><br>**Gold** — Vietnamese gold prices | <img src="docs/media/screens/info-1.png" width="260"><br>**Coin** — crypto prices, 24 h change | <img src="docs/media/screens/info-2.png" width="260"><br>**Stock** — VN-Index sparkline and watchlist |
+| <img src="docs/media/screens/info-0.png" width="260"><br>**Prices** — gold and Petrolimex fuel prices | <img src="docs/media/screens/info-1.png" width="260"><br>**Coin** — crypto prices, 24 h change | <img src="docs/media/screens/info-2.png" width="260"><br>**Stock** — VN-Index sparkline and watchlist |
 | <img src="docs/media/screens/info-3.png" width="260"><br>**Weather** — now and next 4 days | <img src="docs/media/screens/info-4.png" width="260"><br>**Date** — lunar calendar and holidays | <img src="docs/media/screens/notify.png" width="260"><br>**Notifications** — iPhone and Windows |
 | <img src="docs/media/screens/ha-0.png" width="260"><br>**Home** — Home Assistant devices, state at a glance | <img src="docs/media/screens/ha-9.png" width="260"><br>**Air conditioner** — power, temperature, mode, fan | <img src="docs/media/screens/monitor.png" width="260"><br>**Monitor** — your PC in real time |
+| <img src="docs/media/screens/timer-0.png" width="260"><br>**Timer** — countdown with presets | <img src="docs/media/screens/timer-1.png" width="260"><br>**Pomodoro** — 25 / 5, long break after 4 | <img src="docs/media/screens/ring-0.png" width="260"><br>**Time's up** — on any screen, LED flashes |
 | <img src="docs/media/screens/break-0.png" width="260"><br>**Stand up** — after 50 minutes sitting | <img src="docs/media/screens/break-1.png" width="260"><br>**Rest your eyes** — every 20 minutes | <img src="docs/media/screens/settings-0.png" width="260"><br>**Settings** — display, notifications, links |
 
 ## Features
@@ -27,13 +28,17 @@ A 2.8-inch touch deck for your desk. It shows your PC at a glance, runs macros, 
 
 **Home Assistant devices.** The Home app shows your devices as tiles: tap to switch the fan, TV or lights, run scripts, and open the air conditioner to set its temperature, mode and fan speed. See [docs/HOME_CONTROLS.md](docs/HOME_CONTROLS.md).
 
+**Timer.** On the launcher's second page (swipe): a countdown with presets, a Pomodoro timer (25 minutes focus, 5 minutes break, 15 after four rounds) and a daily, weekday or one-off alarm. It runs on the deck itself, so it keeps going without the PC; when time is up the deck wakes, shows a card and flashes the LED.
+
+**Sound.** With a small speaker on the board's speaker connector the deck chimes for timers and alarms, Claude Code prompts, notifications and reminders, and speaks Vietnamese notices sent by Home Assistant, Hermes or any script through the bridge's notify API. See [docs/SOUND.md](docs/SOUND.md).
+
 **Macros.** 18 buttons on 3 pages, each with an icon and a colour. Launch apps, open URLs, send key combos, run commands, start Ollama. Risky ones (Lock PC) need a 1-second hold. The deck only sends a button number; the actions live in `host/config.json` on your PC.
 
 **Claude Code.** Hooks report every session: waiting (LED blinks orange), running with the current tool, done, or failing three times in a row. A permission prompt opens a card on the deck: tap DENY, hold ALLOW or ALWAYS for one second. If you do not answer within 25 seconds, Claude Code asks on the PC as usual. Two more tabs show today's tokens, the cost at API rates, the current 5-hour window against your own peak, top projects and replies per hour. See [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md).
 
 **Notifications.** iPhone notifications over Bluetooth (Apple ANCS) and Windows toasts (Teams, Outlook, Zalo, Phone Link, ...) over Wi-Fi. Vietnamese text keeps its diacritics. Per-app filters, quiet hours, and a switch that hides message text.
 
-**Info.** Vietnamese gold prices, crypto (CoinGecko), the Vietnamese stock market (VN-Index, VN30, HNX and your watchlist), weather (Open-Meteo), and a month calendar with lunar dates and Vietnamese holidays, all computed or fetched by the bridge with no API keys.
+**Info.** Vietnamese gold and Petrolimex fuel prices (zone 1 or 2, with the change since the last adjustment), crypto (CoinGecko), the Vietnamese stock market (VN-Index, VN30, HNX and your watchlist), weather (Open-Meteo), and a month calendar with lunar dates and Vietnamese holidays, all computed or fetched by the bridge with no API keys.
 
 **Health.** Minutes at the PC per hour and for the last 7 days, the current sitting session, breaks and a late-night warning. A STAND UP card after 50 minutes without a break and a 20-second REST YOUR EYES card every 20 minutes. See [docs/HEALTH.md](docs/HEALTH.md).
 
@@ -92,6 +97,8 @@ If more than one USB-serial device is plugged in, set the port in `host/config.j
 | `wifi`, `notifications` | Wi-Fi for the deck and the shared token (generated on first run) | below |
 | `coins`, `stocks`, `weather`, `gold` | What the Info tabs show | `config.example.json` |
 | `claude` | Claude Code relay, answer timeout, usage tab | [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md) |
+| `notify_api` | Port, token and voice for notices from Home Assistant / Hermes | [docs/SOUND.md](docs/SOUND.md) |
+| `fuel` | Petrolimex price zone (1 or 2) for the Prices tab | `config.example.json` |
 | `home_controls` | Which Home Assistant devices the Home app shows | [docs/HOME_CONTROLS.md](docs/HOME_CONTROLS.md) |
 | `home_server` | Home Assistant address and token for the HOME SERVER tab | [docs/HOME_SERVER.md](docs/HOME_SERVER.md) |
 | `activity` | Reminders and auto-lock | [docs/HEALTH.md](docs/HEALTH.md) |
@@ -132,6 +139,7 @@ powershell -ExecutionPolicy Bypass -File .\host\install_autostart_windows.ps1
 | | |
 | --- | --- |
 | [CLAUDE_CODE.md](docs/CLAUDE_CODE.md) | Session status, permission prompts, usage and stats |
+| [SOUND.md](docs/SOUND.md) | Speaker tones, Settings > Sound, the notify API and speech |
 | [HOME_CONTROLS.md](docs/HOME_CONTROLS.md) | Home Assistant devices on the Home app |
 | [HOME_SERVER.md](docs/HOME_SERVER.md) | Home Assistant server on the Monitor screen |
 | [HEALTH.md](docs/HEALTH.md) | Time at the PC, break reminders, auto-lock |

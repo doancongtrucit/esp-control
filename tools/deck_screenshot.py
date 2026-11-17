@@ -54,7 +54,7 @@ def sample_frames() -> list[dict]:
         {"type": "info", "g": {"time": stamp, "items": [
             {"n": "SJC 1L", "b": 12150, "s": 12350, "c": 50}, {"n": "Nhan 9999", "b": 11620, "s": 11920, "c": -30}],
             "xau": 2381.4, "xauc": -6.2}},
-        coin, stock, weather, ACTIVITY, HSERVER, HACTL,
+        coin, stock, weather, ACTIVITY, HSERVER, HACTL, FUEL,
         bridge.notify_packet("Zalo", "Nhóm Dự án", "Chiều nay họp lúc 3 giờ, nhớ mang tài liệu nhé!", source="phone"),
     ]
 
@@ -95,6 +95,9 @@ HACTL = {"type": "hactl", "items": [
     {"n": "Fan timer", "i": "clock", "k": "run", "on": -1, "v": "Run", "c": 0}],
     "ac": {"ix": 0, "on": True, "t": 25, "min": 16, "max": 30, "mode": "cool",
            "modes": ["heat_cool", "cool", "dry"], "fan": "auto", "fans": ["auto", "low", "mid", "high"]}}
+FUEL = {"type": "fuel", "z": 1, "t": "20:05", "items": [
+    ["E10 RON95 M5", 22650, -500], ["E10 RON95 M3", 21150, -470], ["E5 RON92 M2", 20890, -430],
+    ["DO 0,001S M5", 30090, 310], ["DO 0,05S M2", 28690, 290], ["Dầu hỏa", 28600, 0]]}
 CLAUDE_STATS = {"type": "cstats", "ask": 14, "ok": 9, "al": 2, "no": 1, "pc": 2, "done": 23}
 
 

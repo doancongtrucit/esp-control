@@ -170,6 +170,14 @@ HOME SERVER tab of the Monitor screen, from Home Assistant (see [HOME_SERVER.md]
 
 Percentages, degrees C, Mbit/s; `ms` is the API round trip, `upt` seconds since boot, `upd` pending updates; `err` is `offline`, `token` or `error`. Unknown values are null.
 
+### `fuel` (`cyd_2usb`)
+
+Petrolimex retail prices for the Info > Prices tab (`host/fuel_prices.py`, read hourly from webgia.com's copy of the Petrolimex board), VND per litre for the configured zone, with the change since the previous price set:
+
+```json
+{"type": "fuel", "z": 1, "t": "20:05", "items": [["E10 RON95 M5", 22650, -500], ["E5 RON92 M2", 20890, 0]]}
+```
+
 ### `hactl` (`cyd_2usb`)
 
 Home screen tiles from Home Assistant (see [HOME_CONTROLS.md](HOME_CONTROLS.md)), sent when a state changes:
@@ -184,6 +192,18 @@ Home screen tiles from Home Assistant (see [HOME_CONTROLS.md](HOME_CONTROLS.md))
 ```
 
 `k`: `toggle`, `run` or `climate`; `on`: 1, 0 or -1 (not a switch / unknown); `c`: 1 = hold 1 s before it runs. `ac` describes the first climate tile (null when there is none).
+
+### `sound`, `say`, `pcm` (`cyd_2usb`)
+
+Tones and speech for the speaker (see [SOUND.md](SOUND.md)). A `notify` frame may also carry `"s": "<sound>"` to replace the default notification tone.
+
+```json
+{"type": "sound", "s": "doorbell", "urgent": true}
+{"type": "say", "id": 7, "rate": 8000, "len": 24000, "urgent": false}
+{"type": "pcm", "id": 7, "o": 0, "d": "<base64, up to 1024 bytes>"}
+```
+
+`say` announces a clip of `len` bytes of 8-bit unsigned mono PCM (at most 48000); `pcm` frames fill it at offset `o`, and the deck plays it once complete. Sounds that are not `urgent` follow the deck's volume, groups and quiet hours.
 
 ### `wifi` (`cyd_2usb`)
 
@@ -283,6 +303,14 @@ Every 2 s: whether the paired iPhone is connected over BLE and its signal streng
 ```
 
 `ha_press` toggles or runs tile `i`; `ha_ac` drives the air conditioner with a choice from the `hactl` lists. The bridge maps them to Home Assistant services; nothing else is accepted.
+
+### `brief` (`cyd_2usb`)
+
+```json
+{"type": "brief"}
+```
+
+Sent when the Brief tile on the second launcher page is tapped. The bridge answers with `say`/`pcm` clips of the morning brief (see [SOUND.md](SOUND.md#morning-brief)). Over the Wi-Fi link it is an acked command.
 
 ### `macro`
 

@@ -190,6 +190,35 @@
     "name": "Home Server"
   },
   "home_controls": [],
+  "notify_api": {
+    "enabled": true,
+    "port": 47822,
+    "token": "",
+    "speech": true,
+    "voice": "vi-VN-HoaiMyNeural"
+  },
+  "fuel": {
+    "enabled": true,
+    "zone": 1
+  },
+  "voice_alerts": {
+    "enabled": true,
+    "claude": true,
+    "pc": true,
+    "fuel": true,
+    "meetings": true,
+    "remind_minutes": 5,
+    "speak_titles": true,
+    "cpu_temp": 90,
+    "gpu_temp": 85,
+    "ram": 90
+  },
+  "brief": {
+    "auto_at": ""
+  },
+  "calendar": {
+    "ics_urls": []
+  },
   "coins": [
     "bitcoin",
     "ethereum",

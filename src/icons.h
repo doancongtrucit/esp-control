@@ -11,7 +11,7 @@ enum class Icon : uint8_t {
   Mail, Bubble, Gamepad, Headset, Bars, VolDown, Mute, VolUp, Phone, Wifi,
   Home, ChevronLeft, ChevronRight, Bluetooth, Pie,
   Coin, Trend, Cloud, Calendar, Sun, Rain, Storm, Fog, Clock,
-  Fan, Snow, Tv, Power, Bolt
+  Fan, Snow, Tv, Power, Bolt, Timer
 };
 
 // Name used in host/config.json ("lock", "volup", ...), case-insensitive.

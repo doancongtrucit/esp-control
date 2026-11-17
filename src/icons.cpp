@@ -25,7 +25,7 @@ constexpr NamedIcon ICON_NAMES[] = {
     {"rain", Icon::Rain},         {"storm", Icon::Storm},           {"fog", Icon::Fog},
     {"clock", Icon::Clock},       {"fan", Icon::Fan},               {"ac", Icon::Snow},
     {"snow", Icon::Snow},         {"tv", Icon::Tv},                 {"power", Icon::Power},
-    {"bolt", Icon::Bolt},
+    {"bolt", Icon::Bolt},         {"timer", Icon::Timer},
 };
 
 // Maps the 24-unit design grid onto the requested box.
@@ -389,6 +389,13 @@ void drawIcon(TFT_eSPI &tft, Icon icon, int x, int y, int size, uint16_t fg, uin
       p.line(4, 13, 6, 7.5f);
       p.line(20, 13, 18, 7.5f);
       p.line(12, 3, 12, 12);
+      break;
+    case Icon::Timer:  // stopwatch
+      p.circle(12, 13.5f, 8);
+      p.line(10, 2.5f, 14, 2.5f);
+      p.line(12, 2.5f, 12, 5.5f);
+      p.line(12, 13.5f, 15, 10.5f);
+      p.line(18.5f, 6, 20, 4.5f);
       break;
     case Icon::Bolt: {
       const float bolt[] = {13.5f, 2, 5.5f, 13.5f, 11, 13.5f, 10, 22, 18.5f, 10, 13, 10};
