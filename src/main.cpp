@@ -14,6 +14,8 @@
 
 #include "ancs.h"
 #include "aram.h"
+#include "hud_ble.h"
+#include "gofa_ble.h"
 #include "activity_info.h"
 #include "home_server_info.h"
 #include "ha_controls_info.h"
@@ -1738,6 +1740,14 @@ void dispatchFrame(JsonDocument &doc) {
     handleWifi(doc);
   } else if (strcmp(type, "shot") == 0) {
     handleShot(doc);
+  } else if (strcmp(type, "hud-demo") == 0) {
+    hudSetDemo(doc["on"] | true);
+  } else if (strcmp(type, "hud-ble") == 0) {
+    ancsSetHudMode(doc["on"] | true);  // test: force VietMap HUD advertising without the screen
+  } else if (strcmp(type, "gofa-ble") == 0) {
+    ancsSetGofaMode(doc["on"] | true);  // test: force GOFA advertising without the screen
+  } else if (strcmp(type, "gofa-demo") == 0) {
+    gofaSetDemo(doc["on"] | true);
 #endif
   } else if (strcmp(type, "ping") == 0) {
     sendSimpleFrame("pong");
@@ -1916,6 +1926,10 @@ void setup() {
   sendFrame(hello);
 #ifdef DECK_UI_V2
   ancsBegin("ESP32 Deck", onPhoneNotification);
+  hudBleAttach();   // VIETMAP HUD peripheral (service fff0) on the same BLE server
+  gofaBleAttach();  // GOFA HUD peripheral (service 0x2A60)
+  ancsStartAdvertising();  // after all services exist, so the server registers them
+  Serial.printf("GOFA identity: name=%s uuid=%s\n", ancsGofaName(), ancsGofaUuid());
   netBegin(onPcNotification, uiAramPacket);
   netSetLinkHandler(onLinkDatagram);
   soundBegin();
@@ -1930,6 +1944,8 @@ void loop() {
   updateStatusLed();
 #ifdef DECK_UI_V2
   ancsLoop();
+  hudBleLoop();
+  gofaBleLoop();
   updatePhoneLink();
   sendPhonePresence();
   netLoop();

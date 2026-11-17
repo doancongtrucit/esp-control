@@ -2,6 +2,11 @@
 #include "ancs.h"
 
 #include <NimBLEDevice.h>
+#if defined(ESP_PLATFORM)
+#  include "nimble/nimble/host/include/host/ble_gatt.h"  // ble_gattc_exchange_mtu
+#else
+#  include "host/ble_gatt.h"
+#endif
 
 #include "ancs_parse.h"
 
@@ -20,6 +25,16 @@ constexpr uint8_t MESSAGE_MAX = 64;
 
 AncsHandler handler = nullptr;
 const char *advertisedName = "";
+uint16_t extraService16 = 0;  // an extra 16-bit service UUID to advertise (0 = none), e.g. the HUD fff0
+bool hudMode = false;         // advertise as a bare HUD peripheral (fff0, no ANCS) instead
+const char *hudName = "Hub Cross";  // exact name the user's real VietMap H1X advertises (app's scan filter target)
+bool gofaMode = false;        // advertise as a GOFA HUD (128-bit identifier UUID + HUD_xxxx name)
+// GOFA identifier UUID prefix (XXXXXXXX-XXXX-XXXX-XXXX): "agreed between the
+// integrator and GOFA". The MAC fills the last 12 hex. Change here if GOFA
+// issues a specific prefix for the registered device.
+#define GOFA_UUID_PREFIX "6e400001-b5a3-f393-e0a9"
+std::string gofaName;   // "HUD_xxxx", built from the MAC at begin()
+std::string gofaUuid;   // prefix + MAC, built at begin()
 volatile bool connected = false;
 volatile bool encrypted = false;
 volatile bool discoveryPending = false;
@@ -49,7 +64,19 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     connected = true;
     encrypted = false;
     connectedAtMs = millis();
-    NimBLEDevice::startSecurity(info.getConnHandle());
+    if (gofaMode) {
+      // GOFA drops nav writes at the default 23-byte MTU, so ask for a big MTU
+      // immediately. The app expects an open link, so do NOT force pairing.
+      ble_gattc_exchange_mtu(info.getConnHandle(), nullptr, nullptr);
+      return;
+    }
+    // In HUD mode the peer is the VIETMAP app; its fff0 characteristics need no
+    // encryption, so don't force pairing (which would prompt on the iPhone).
+    if (!hudMode) NimBLEDevice::startSecurity(info.getConnHandle());
+  }
+
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo &) override {
+    if (gofaMode) Serial.printf("GOFA MTU=%u\n", mtu);
   }
 
   void onDisconnect(NimBLEServer *, NimBLEConnInfo &, int) override {
@@ -88,13 +115,43 @@ void onDataSource(NimBLERemoteCharacteristic *, uint8_t *data, size_t length, bo
 void startAdvertising() {
   NimBLEAdvertisementData adv;
   adv.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
-  // List of 128-bit Service Solicitation UUIDs: ANCS, little-endian.
-  const uint8_t solicitation[] = {17, 0x15, 0xD0, 0x00, 0x2D, 0x12, 0x1E, 0x4B, 0x0F, 0xA4,
-                                  0x99, 0x4E, 0xCE, 0xB5, 0x31, 0xF4, 0x05, 0x79};
-  adv.addData(solicitation, sizeof(solicitation));
   NimBLEAdvertisementData scan;
-  scan.setName(advertisedName);
   NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+  if (gofaMode) {
+    // GOFA: advertise the 128-bit identifier UUID first (its last 12 hex = MAC),
+    // name in the scan response. No ANCS solicitation.
+    advertising->setAdvertisementData(NimBLEAdvertisementData());  // clear
+    NimBLEAdvertisementData g;
+    g.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    g.addServiceUUID(NimBLEUUID(gofaUuid));
+    scan.setName(gofaName.c_str());
+    bool okAdv = advertising->setAdvertisementData(g);
+    bool okScan = advertising->setScanResponseData(scan);
+    bool okStart = advertising->start();
+    Serial.printf("GOFA adv: setAdv=%d setScan=%d start=%d uuid=%s name=%s\n", okAdv, okScan, okStart,
+                  gofaUuid.c_str(), gofaName.c_str());
+    return;
+  }
+  if (hudMode) {
+    // A clean HUD peripheral: advertise only the HUD service (fff0) and a name
+    // the user recognises. No ANCS solicitation, so iOS does not grab the link
+    // for notifications and VIETMAP LIVE can scan, find and connect to fff0.
+    const uint8_t svc[] = {0x03, 0x03, static_cast<uint8_t>(extraService16),
+                           static_cast<uint8_t>(extraService16 >> 8)};
+    adv.addData(svc, sizeof(svc));
+    scan.setName(hudName);
+  } else {
+    // List of 128-bit Service Solicitation UUIDs: ANCS, little-endian.
+    const uint8_t solicitation[] = {17, 0x15, 0xD0, 0x00, 0x2D, 0x12, 0x1E, 0x4B, 0x0F, 0xA4,
+                                    0x99, 0x4E, 0xCE, 0xB5, 0x31, 0xF4, 0x05, 0x79};
+    adv.addData(solicitation, sizeof(solicitation));
+    if (extraService16) {
+      const uint8_t svc[] = {0x03, 0x03, static_cast<uint8_t>(extraService16),
+                             static_cast<uint8_t>(extraService16 >> 8)};
+      adv.addData(svc, sizeof(svc));
+    }
+    scan.setName(advertisedName);
+  }
   advertising->setAdvertisementData(adv);
   advertising->setScanResponseData(scan);
   advertising->start();
@@ -140,12 +197,24 @@ void ancsBegin(const char *deviceName, AncsHandler onNotification) {
   handler = onNotification;
   advertisedName = deviceName;
   NimBLEDevice::init(deviceName);
+  NimBLEDevice::setMTU(517);  // GOFA needs a large MTU or it drops nav writes
   NimBLEDevice::setSecurityAuth(true, false, true);  // bond, no MITM, secure connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
-  startAdvertising();
+
+  // Build the GOFA identity from this device's BLE MAC.
+  std::string mac = NimBLEDevice::getAddress().toString();  // the chip's BLE MAC, "aa:bb:cc:dd:ee:ff"
+  std::string hex;
+  for (char c : mac) if (c != ':') hex += c;  // "3076f5e934ce"
+  gofaName = std::string("HUD_") + (hex.size() >= 4 ? hex.substr(hex.size() - 4) : hex);
+  gofaUuid = std::string(GOFA_UUID_PREFIX "-") + hex;
+
+  // Advertising is deferred to ancsStartAdvertising(), called from setup() after
+  // the HUD/GOFA services are attached, so the NimBLE server registers them all.
 }
+
+void ancsStartAdvertising() { startAdvertising(); }
 
 void ancsLoop() {
   if (!connected) {
@@ -205,5 +274,41 @@ bool ancsRssi(int &rssi) {
   return rssi < 0;  // 0 means the controller could not read it
 }
 void ancsForgetPairing() { NimBLEDevice::deleteAllBonds(); }
+
+void ancsAdvertiseService16(uint16_t uuid16) {
+  extraService16 = uuid16;
+  if (!connected) {
+    NimBLEDevice::getAdvertising()->stop();
+    startAdvertising();
+  }
+}
+
+void ancsSetGofaMode(bool on) {
+  if (gofaMode == on) return;
+  gofaMode = on;
+  NimBLEDevice::getAdvertising()->stop();
+  if (connected) {
+    NimBLEServer *server = NimBLEDevice::getServer();
+    if (server) server->disconnect(connHandle);
+  }
+  startAdvertising();
+}
+
+const char *ancsGofaName() { return gofaName.c_str(); }
+const char *ancsGofaUuid() { return gofaUuid.c_str(); }
+
+void ancsSetHudMode(bool on) {
+  if (hudMode == on) return;
+  hudMode = on;
+  // Drop any current link (the iPhone's ANCS link) so the controller is free to
+  // advertise the new identity; onDisconnect restarts advertising in this mode.
+  NimBLEDevice::getAdvertising()->stop();
+  if (connected) {
+    NimBLEServer *server = NimBLEDevice::getServer();
+    if (server) server->disconnect(connHandle);
+    // onDisconnect will startAdvertising(); give it a moment by also starting here.
+  }
+  startAdvertising();
+}
 
 #endif  // DECK_UI_V2
