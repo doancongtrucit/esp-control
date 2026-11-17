@@ -2852,11 +2852,11 @@ void timerTick() {
 // speed-limit sign, next turn and camera distance, street name. Partial redraws
 // keep it from flickering; the top-left 40x32 stays the home button.
 
-constexpr int HUD_GCX = 86, HUD_GCY = 138, HUD_GR = 78, HUD_GW = 11, HUD_GMAX = 120;
-constexpr int HUD_TURN_X = 172, HUD_TURN_Y = 40;
-constexpr int HUD_SIGN_CX = 210, HUD_SIGN_CY = 172, HUD_SIGN_R = 34;
-constexpr int HUD_CAM_X = 250, HUD_CAM_Y = 140;
-constexpr int HUD_WARN_Y = 220;   // warning-sign badge: bottom strip (GOFA sends no weather)
+constexpr int HUD_GCX = 76, HUD_GCY = 132, HUD_GR = 60, HUD_GW = 8, HUD_GMAX = 120;
+constexpr int HUD_CARD_X = 150, HUD_CARD_Y = 42, HUD_CARD_W = 162, HUD_CARD_H = 78;  // turn card
+constexpr int HUD_SIGN_CX = 184, HUD_SIGN_CY = 161, HUD_SIGN_R = 27;                 // current limit roundel
+constexpr int HUD_CHIP_X = 222, HUD_CHIP_Y = 130, HUD_CHIP_W = 90, HUD_CHIP_H = 62;  // camera + upcoming-limit list
+constexpr int HUD_WARN_Y = 206;   // warning pill: bottom strip (GOFA sends no weather)
 constexpr uint16_t HUD_RED = 0xF800;
 constexpr uint16_t HUD_AMBER = 0xFD20;
 
@@ -2881,88 +2881,141 @@ void hudDrawGauge(int speed, int limit, bool over) {
   const int aEnd = a0 + (a1 - a0) * clamped / HUD_GMAX;
   tft.drawSmoothArc(HUD_GCX, HUD_GCY, HUD_GR, HUD_GR - HUD_GW, a0, a1, T_DIVIDER, T_BG, true);
   if (aEnd > a0 + 1) tft.drawSmoothArc(HUD_GCX, HUD_GCY, HUD_GR, HUD_GR - HUD_GW, a0, aEnd, col, T_BG, true);
-  tft.fillRect(HUD_GCX - 60, HUD_GCY - 34, 120, 62, T_BG);
+  tft.fillCircle(HUD_GCX, HUD_GCY, HUD_GR - HUD_GW - 1, T_BG);  // clear inside the ring only
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(over ? HUD_RED : T_TEXT, T_BG);
-  uiTextIn(UiFont::Huge, speed < 0 ? String("--") : String(speed), HUD_GCX, HUD_GCY - 2);
+  uiTextIn(UiFont::Huge, speed < 0 ? String("--") : String(speed), HUD_GCX, HUD_GCY - 3);
   tft.setTextColor(T_MUTED, T_BG);
-  uiTextIn(UiFont::Small, "km/h", HUD_GCX, HUD_GCY + 34);
+  uiTextIn(UiFont::Small, "km/h", HUD_GCX, HUD_GCY + 32);
 }
 
-void hudDrawArrow(int icon, int cx, int cy, uint16_t c) {
+void hudDrawArrow(int icon, int cx, int cy, uint16_t c, uint16_t bg = T_BG) {
   switch (icon) {
     case 1:   // left
     case 2: { // right
       const int d = icon == 1 ? -1 : 1;
-      tft.fillRect(cx - 4, cy - 2, 8, 24, c);
-      tft.fillRect(d < 0 ? cx - 16 : cx - 4, cy - 6, 20, 8, c);
-      tft.fillTriangle(cx + d * 16, cy - 14, cx + d * 16, cy + 6, cx + d * 28, cy - 4, c);
+      tft.fillRect(cx - 5, cy - 2, 10, 26, c);                                // vertical shaft
+      tft.fillRect(d < 0 ? cx - 16 : cx - 5, cy - 7, 21, 10, c);              // horizontal shaft
+      tft.fillTriangle(cx + d * 16, cy - 16, cx + d * 16, cy + 8, cx + d * 28, cy - 4, c);  // head
       break;
     }
     case 3:   // slight left
     case 4: { // slight right
       const int d = icon == 3 ? -1 : 1;
-      tft.fillRect(cx - 4, cy, 8, 22, c);
-      tft.drawWideLine(cx, cy + 2, cx + d * 12, cy - 10, 8, c, T_BG);
-      tft.fillTriangle(cx + d * 4, cy - 18, cx + d * 22, cy - 22, cx + d * 18, cy - 4, c);
+      tft.fillRect(cx - 5, cy, 10, 24, c);
+      tft.drawWideLine(cx, cy + 2, cx + d * 14, cy - 12, 10, c, bg);
+      tft.fillTriangle(cx + d * 4, cy - 20, cx + d * 24, cy - 24, cx + d * 20, cy - 4, c);
       break;
     }
     case 5:  // u-turn
-      tft.fillRect(cx + 6, cy - 6, 8, 28, c);
-      tft.drawSmoothArc(cx, cy - 6, 14, 6, 90, 270, c, T_BG, false);
-      tft.fillRect(cx - 14, cy - 6, 8, 10, c);
-      tft.fillTriangle(cx - 20, cy + 4, cx, cy + 4, cx - 10, cy + 18, c);
+      tft.fillRect(cx + 7, cy - 6, 10, 30, c);
+      tft.drawSmoothArc(cx, cy - 6, 16, 7, 90, 270, c, bg, false);
+      tft.fillRect(cx - 16, cy - 6, 10, 11, c);
+      tft.fillTriangle(cx - 23, cy + 5, cx - 1, cy + 5, cx - 12, cy + 20, c);
       break;
     case 6:  // roundabout: a ring the stem enters, exiting up-right with an arrowhead
-      tft.drawSmoothArc(cx - 2, cy - 2, 13, 8, 0, 360, c, T_BG, false);
-      tft.fillRect(cx - 4, cy + 10, 8, 14, c);               // entry stem (bottom)
-      tft.fillRect(cx + 6, cy - 16, 7, 12, c);               // exit stem (up-right)
-      tft.fillTriangle(cx + 2, cy - 16, cx + 17, cy - 16, cx + 9, cy - 26, c);  // arrowhead
+      tft.drawSmoothArc(cx - 2, cy - 2, 14, 9, 0, 360, c, bg, false);
+      tft.fillRect(cx - 5, cy + 11, 10, 13, c);              // entry stem (bottom)
+      tft.fillRect(cx + 6, cy - 18, 9, 13, c);               // exit stem (up-right)
+      tft.fillTriangle(cx + 1, cy - 18, cx + 19, cy - 18, cx + 10, cy - 29, c);  // arrowhead
       break;
     default:  // straight
-      tft.fillRect(cx - 4, cy - 6, 8, 28, c);
-      tft.fillTriangle(cx - 12, cy - 6, cx + 12, cy - 6, cx, cy - 22, c);
+      tft.fillRect(cx - 5, cy - 6, 10, 30, c);
+      tft.fillTriangle(cx - 14, cy - 6, cx + 14, cy - 6, cx, cy - 24, c);
       break;
   }
 }
 
 void hudDrawTurn(int icon, int dist, const String &nextRoad) {
-  tft.fillRect(HUD_TURN_X, HUD_TURN_Y, 142, 90, T_BG);  // arrow + distance + next-road line
+  tft.fillRect(HUD_CARD_X, HUD_CARD_Y, HUD_CARD_W, HUD_CARD_H, T_BG);
   if (icon < 0 && dist < 0) return;
-  hudDrawArrow(icon < 0 ? 0 : icon, HUD_TURN_X + 28, HUD_TURN_Y + 30, T_TEXT);
+  tft.fillRoundRect(HUD_CARD_X, HUD_CARD_Y, HUD_CARD_W, HUD_CARD_H, 10, T_CARD);  // rounded card
+  hudDrawArrow(icon < 0 ? 0 : icon, HUD_CARD_X + 30, HUD_CARD_Y + 26, T_TEXT, T_CARD);
   tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(T_TEXT, T_BG);
-  uiTextIn(UiFont::Large, hudDist(dist), HUD_TURN_X + 58, HUD_TURN_Y + 30);
+  tft.setTextColor(T_TEXT, T_CARD);
+  uiTextIn(UiFont::Large, hudDist(dist), HUD_CARD_X + 70, HUD_CARD_Y + 24);
   if (nextRoad.length()) {  // the road the maneuver turns onto
-    const String fit = fitViText(nextRoad, 138, false);
-    drawViText(tft, HUD_TURN_X, HUD_TURN_Y + 66, fit, T_ACCENT, T_BG, false);
+    const String fit = fitViText(nextRoad, HUD_CARD_W - 22, false);
+    drawViText(tft, HUD_CARD_X + 12, HUD_CARD_Y + 58, fit, T_ACCENT, T_CARD, false);
   }
 }
 
 // Short label for a non-speed, non-camera GOFA sign id (ids from the GOFA table;
 // unknown ids print as "Biển <id>" so they can be identified from real drives).
 String hudWarnLabel(int id) {
-  if (id == 12 || id == 13) return "Khu dân cư";
-  if (id == 14 || id == 15) return "Cấm vượt";
-  if (id == 17) return "Điểm nghỉ";
+  if (id == 12) return "Vào khu dân cư";
+  if (id == 13) return "Ra khu dân cư";
+  if (id == 14) return "Cấm vượt";
+  if (id == 15) return "Hết cấm vượt";
+  if (id == 17) return "Điểm dừng nghỉ";
   if (id == 18) return "Trạm thu phí";
-  if (id >= 21 && id <= 27) return "Cấm rẽ";
+  if (id == 21 || id == 23) return "Cấm rẽ trái";
+  if (id == 22 || id == 24) return "Cấm rẽ phải";
+  if (id == 25 || id == 26) return "Cấm quay đầu";
+  if (id == 27) return "Cấm đi thẳng";
   return "Biển " + String(id);
+}
+
+// Category pictogram for a GOFA warning sign, ~18px, centred at (cx, cy).
+// Prohibition signs (cấm) use a red ring; info signs use colour c (amber).
+void hudSignGlyph(int id, int cx, int cy, uint16_t c, uint16_t bg) {
+  if (id == 12 || id == 13) {              // residential: house
+    tft.fillTriangle(cx - 9, cy - 1, cx + 9, cy - 1, cx, cy - 9, c);
+    tft.fillRect(cx - 6, cy - 1, 12, 9, c);
+    tft.fillRect(cx - 2, cy + 3, 4, 5, bg);           // door
+  } else if (id == 17) {                   // rest area: cup + steam
+    tft.fillRoundRect(cx - 7, cy - 2, 11, 10, 2, c);
+    tft.fillRect(cx + 4, cy - 1, 4, 2, c);            // handle top
+    tft.fillRect(cx + 6, cy - 1, 2, 6, c);            // handle side
+    tft.fillRect(cx + 4, cy + 3, 4, 2, c);            // handle bottom
+    tft.fillRect(cx - 4, cy - 8, 2, 4, c);            // steam
+    tft.fillRect(cx, cy - 9, 2, 4, c);
+    tft.fillRect(cx + 3, cy - 8, 2, 4, c);
+  } else if (id == 18) {                   // toll: barrier gate
+    tft.fillRect(cx - 8, cy - 7, 3, 15, c);           // post
+    tft.fillRect(cx - 5, cy - 4, 16, 5, c);           // arm
+    tft.fillRect(cx - 1, cy - 4, 2, 5, bg);           // stripe
+    tft.fillRect(cx + 4, cy - 4, 2, 5, bg);           // stripe
+  } else if (id == 14 || id == 15) {       // no overtaking: red ring + two cars
+    tft.fillSmoothCircle(cx, cy, 9, HUD_RED, bg);
+    tft.fillSmoothCircle(cx, cy, 6, bg, HUD_RED);
+    tft.fillRect(cx - 3, cy - 3, 2, 6, HUD_RED);
+    tft.fillRect(cx + 1, cy - 3, 2, 6, T_TEXT);
+  } else if (id >= 21 && id <= 27) {       // no-turn family: red prohibition ring + slash
+    tft.fillSmoothCircle(cx, cy, 9, HUD_RED, bg);
+    tft.fillSmoothCircle(cx, cy, 6, bg, HUD_RED);
+    tft.drawWideLine(cx - 6, cy + 6, cx + 6, cy - 6, 3, HUD_RED, bg);          // slash
+  } else {                                 // generic warning triangle
+    tft.fillTriangle(cx - 9, cy + 7, cx + 9, cy + 7, cx, cy - 8, c);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(bg, c);
+    uiTextIn(UiFont::Small, "!", cx, cy + 2);
+  }
 }
 
 void hudDrawWarn(int id, int dist) {
   tft.fillRect(0, HUD_WARN_Y - 2, UI_SCREEN_W, UI_SCREEN_H - (HUD_WARN_Y - 2), T_BG);
   if (id < 0) return;
-  const uint16_t c = (dist >= 0 && dist <= 150) ? HUD_RED : HUD_AMBER;
-  // Small warning triangle badge at the left.
-  const int bx = 8, by = HUD_WARN_Y;
-  tft.fillTriangle(bx, by + 14, bx + 16, by + 14, bx + 8, by, c);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_BLACK, c);
-  uiTextIn(UiFont::Small, "!", bx + 8, by + 10);
-  String text = hudWarnLabel(id);
-  if (dist >= 0) text += "  " + hudDist(dist);
-  drawViText(tft, bx + 24, HUD_WARN_Y, fitViText(text, UI_SCREEN_W - bx - 30, false), c, T_BG, false);
+  const bool near = dist >= 0 && dist <= 150;
+  const uint16_t bg = near ? T_ALERT_BG : T_CARD;   // red-tinted pill when close
+  const uint16_t c = near ? HUD_RED : HUD_AMBER;
+  const int px = 10, pw = UI_SCREEN_W - 20, ph = 26, py = HUD_WARN_Y;
+  tft.fillRoundRect(px, py, pw, ph, 13, bg);
+  // Centre the whole group (triangle badge + label + distance) in the pill.
+  const String label = hudWarnLabel(id);
+  const String distStr = dist >= 0 ? hudDist(dist) : String();
+  const int wl = viTextWidth(label, false);
+  const int gap = 12;                               // space before the distance
+  const int wd = distStr.length() ? viTextWidth(distStr, false) : 0;
+  const int tri = 24;                               // triangle badge + its gap
+  const int total = tri + wl + (distStr.length() ? gap + wd : 0);
+  int gx = px + (pw - total) / 2;
+  if (gx < px + 6) gx = px + 6;
+  const int ty = py + ph / 2;
+  hudSignGlyph(id, gx + 9, ty, c, bg);                                   // category pictogram
+  drawViText(tft, gx + tri, py + 6, label, c, bg, false);                // label (amber / red)
+  if (distStr.length())
+    drawViText(tft, gx + tri + wl + gap, py + 6, distStr, T_TEXT, bg, false);  // distance (white)
 }
 
 void hudDrawSign(int limit) {
@@ -2970,32 +3023,63 @@ void hudDrawSign(int limit) {
                T_BG);
   if (limit <= 0) return;
   tft.fillSmoothCircle(HUD_SIGN_CX, HUD_SIGN_CY, HUD_SIGN_R, HUD_RED, T_BG);
-  tft.fillSmoothCircle(HUD_SIGN_CX, HUD_SIGN_CY, HUD_SIGN_R - 7, TFT_WHITE, HUD_RED);
+  tft.fillSmoothCircle(HUD_SIGN_CX, HUD_SIGN_CY, HUD_SIGN_R - 6, TFT_WHITE, HUD_RED);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_BLACK, TFT_WHITE);
-  uiTextIn(limit >= 100 ? UiFont::Large : UiFont::Huge, String(limit), HUD_SIGN_CX, HUD_SIGN_CY - 1);
+  uiTextIn(limit >= 100 ? UiFont::BodyBold : UiFont::Large, String(limit), HUD_SIGN_CX, HUD_SIGN_CY + 2);
 }
 
-void hudDrawCamera(int dist) {
-  tft.fillRect(HUD_CAM_X, HUD_CAM_Y, 66, 56, T_BG);
-  if (dist < 0) return;
-  const uint16_t c = dist <= 100 ? HUD_RED : T_ACCENT;
-  const int x = HUD_CAM_X + 16, y = HUD_CAM_Y + 6;
-  tft.fillRoundRect(x, y, 26, 14, 3, c);
-  tft.fillTriangle(x + 26, y + 3, x + 26, y + 11, x + 32, y + 7, c);
-  tft.fillRect(x + 4, y + 14, 4, 8, c);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(c, T_BG);
-  uiTextIn(UiFont::BodyBold, hudDist(dist), HUD_CAM_X + 33, HUD_CAM_Y + 30);
+// Clean speed-camera glyph (body + lens + top hump) for the chip list.
+void hudCameraIcon(int x, int y, uint16_t c, uint16_t bg) {
+  tft.fillRect(x + 4, y, 7, 4, c);                  // top hump
+  tft.fillRoundRect(x, y + 3, 20, 13, 3, c);        // body
+  tft.fillSmoothCircle(x + 7, y + 9, 3, bg, c);     // lens hole
+  tft.fillSmoothCircle(x + 7, y + 9, 1, c, bg);     // iris
+  // lightning mark -> speed-enforcement ("phạt nguội") camera, knocked out of the body
+  tft.fillTriangle(x + 16, y + 4, x + 12, y + 10, x + 16, y + 9, bg);
+  tft.fillTriangle(x + 15, y + 14, x + 18, y + 8, x + 14, y + 9, bg);
 }
 
-// Small line under the speed-limit sign: an upcoming speed-limit sign + distance.
-void hudDrawLimitAhead(int kmh, int dist) {
-  tft.fillRect(HUD_SIGN_CX - 40, 205, 120, 13, T_BG);
-  if (kmh <= 0) return;
+// Small proper speed-limit roundel (red ring + white + number) for the chip list.
+void hudMiniSign(int cx, int cy, int limit, uint16_t bg) {
+  tft.fillSmoothCircle(cx, cy, 11, HUD_RED, bg);
+  tft.fillSmoothCircle(cx, cy, 7, TFT_WHITE, HUD_RED);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(HUD_AMBER, T_BG);
-  uiTextIn(UiFont::Small, String(kmh) + " · " + hudDist(dist), HUD_SIGN_CX, 211);
+  tft.setTextColor(TFT_BLACK, TFT_WHITE);
+  uiTextIn(UiFont::Small, String(limit), cx, cy + 1);
+}
+
+// Upcoming-events list (option A): camera distance and/or an upcoming speed-limit
+// sign, each as [icon] .... [distance] with the distances right-aligned. One row
+// is centred; two rows split with a hairline divider. Red icon when close (<=100 m).
+void hudDrawChips(int camDist, int limKmh, int limDist) {
+  tft.fillRect(HUD_CHIP_X, HUD_CHIP_Y, HUD_CHIP_W, HUD_CHIP_H, T_BG);
+  const bool hasCam = camDist >= 0, hasLim = limKmh > 0;
+  if (!hasCam && !hasLim) return;
+  tft.fillRoundRect(HUD_CHIP_X, HUD_CHIP_Y, HUD_CHIP_W, HUD_CHIP_H, 9, T_CARD_ALT);
+  const int rx = HUD_CHIP_X + HUD_CHIP_W - 8;  // right edge for distances
+  auto camRow = [&](int cy) {
+    const uint16_t ic = camDist <= 100 ? HUD_RED : T_MUTED;
+    hudCameraIcon(HUD_CHIP_X + 10, cy - 8, ic, T_CARD_ALT);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(T_TEXT, T_CARD_ALT);
+    uiTextIn(UiFont::BodyBold, hudDist(camDist), rx, cy);
+  };
+  auto limRow = [&](int cy) {
+    hudMiniSign(HUD_CHIP_X + 21, cy, limKmh, T_CARD_ALT);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(T_TEXT, T_CARD_ALT);
+    uiTextIn(UiFont::BodyBold, hudDist(limDist), rx, cy);
+  };
+  if (hasCam && hasLim) {
+    camRow(HUD_CHIP_Y + 17);
+    tft.drawFastHLine(HUD_CHIP_X + 8, HUD_CHIP_Y + 31, HUD_CHIP_W - 16, T_DIVIDER);
+    limRow(HUD_CHIP_Y + 45);
+  } else if (hasCam) {
+    camRow(HUD_CHIP_Y + HUD_CHIP_H / 2);
+  } else {
+    limRow(HUD_CHIP_Y + HUD_CHIP_H / 2);
+  }
 }
 
 void hudDrawTop(const String &street, bool connected, bool stale) {
@@ -3014,6 +3098,7 @@ void hudDrawTop(const String &street, bool connected, bool stale) {
   }
   const String fit = fitViText(title, 210, true);  // between the chevron and the gear
   drawViText(tft, 166 - viTextWidth(fit, true) / 2, 7, fit, col, T_BG, true);
+  tft.drawFastHLine(10, UI_HEADER_H - 1, UI_SCREEN_W - 20, T_DIVIDER);  // hairline under header
 }
 
 void hudDrawWeather(const String &weather) {
@@ -3044,9 +3129,9 @@ void drawHudV2() {
   if (all || s.turnIcon != hudShown.turnIcon || s.turnDistM != hudShown.turnDist || arrowRoad != hudShown.nextStreet)
     hudDrawTurn(s.turnIcon, s.turnDistM, arrowRoad);
   if (all || s.speedLimit != hudShown.limit) hudDrawSign(s.speedLimit);
-  if (all || limAhead != hudShown.limAhead || s.limitAheadDistM != hudShown.limAheadDist)
-    hudDrawLimitAhead(limAhead, s.limitAheadDistM);
-  if (all || camDist != hudShown.cam) hudDrawCamera(camDist);
+  if (all || camDist != hudShown.cam || limAhead != hudShown.limAhead ||
+      s.limitAheadDistM != hudShown.limAheadDist)
+    hudDrawChips(camDist, limAhead, s.limitAheadDistM);
   if (all || warnId != hudShown.warnId || s.warnSignDistM != hudShown.warnDist)
     hudDrawWarn(warnId, s.warnSignDistM);
   // The bottom strip shows the warning sign when present, otherwise weather.

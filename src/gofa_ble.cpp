@@ -236,8 +236,11 @@ void gofaBleLoop() {
     nav.turnIcon = phase == 0 ? kTurnLeft : phase == 1 ? kTurnRight : kTurnRoundabout;
     nav.street = phase == 1 ? "Nguyễn Tuân" : "Lê Văn Lương";
     nav.nextStreet = phase == 0 ? "Phan Đăng Lưu" : phase == 1 ? "Hoàng Đạo Thúy" : "Ngã 6 Nguyễn Trãi";
-    nav.warnSignId = t < 150 ? 18 : -1;        // 18 = toll, to preview the warning slot
-    nav.warnSignDistM = t < 150 ? int(300 - t) : -1;
+    static const int kWarnIds[8] = {13, 15, 18, 22, 25, 27, 17, 12};  // cycle to preview each label
+    nav.warnSignId = t < 180 ? kWarnIds[(millis() / 2500) % 8] : -1;
+    nav.warnSignDistM = t < 180 ? int(300 - t) : -1;
+    nav.limitAheadKmh = t < 150 ? 40 : -1;     // upcoming speed-limit sign, to preview the 2-row chip
+    nav.limitAheadDistM = t < 150 ? int(500 - t) : -1;
     nav.weather.clear();
     hasData = true; lastFrameMs = millis();
   }
