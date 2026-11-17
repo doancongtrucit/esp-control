@@ -1136,6 +1136,43 @@ void saveSoundSettings() {
   p.end();
 }
 
+// HUD screen options (NVS namespace "deckhud"). Screen brightness reuses
+// settings.brightness, so it is not stored here.
+struct HudSettings {
+  bool overBeep = true;     // beep when over the speed limit
+  uint8_t overTol = 0;      // extra km/h over the limit before beeping: 0 -> +0, 1 -> +5, 2 -> +10
+  bool showWarn = true;     // generic warning signs (toll, bans, ...)
+  bool showCam = true;      // camera signs
+  bool signDist = true;     // show the distance to an upcoming speed-limit sign
+  bool nextRoad = true;     // true: road to turn onto; false: current road, by the arrow
+} hudSettings;
+
+uint8_t hudOverTolKmh() { return hudSettings.overTol * 5; }  // index -> km/h
+
+void loadHudSettings() {
+  Preferences p;
+  if (!p.begin("deckhud", true)) return;
+  hudSettings.overBeep = p.getBool("beep", hudSettings.overBeep);
+  hudSettings.overTol = min<uint8_t>(p.getUChar("tol", hudSettings.overTol), 2);
+  hudSettings.showWarn = p.getBool("warn", hudSettings.showWarn);
+  hudSettings.showCam = p.getBool("cam", hudSettings.showCam);
+  hudSettings.signDist = p.getBool("sdist", hudSettings.signDist);
+  hudSettings.nextRoad = p.getBool("nroad", hudSettings.nextRoad);
+  p.end();
+}
+
+void saveHudSettings() {
+  Preferences p;
+  p.begin("deckhud", false);
+  p.putBool("beep", hudSettings.overBeep);
+  p.putUChar("tol", hudSettings.overTol);
+  p.putBool("warn", hudSettings.showWarn);
+  p.putBool("cam", hudSettings.showCam);
+  p.putBool("sdist", hudSettings.signDist);
+  p.putBool("nroad", hudSettings.nextRoad);
+  p.end();
+}
+
 bool soundGroupOn(SoundGroup g) { return soundSettings.groups & (1u << static_cast<uint8_t>(g)); }
 
 // Plays when the volume, the sound's group and quiet hours allow it.
@@ -1934,6 +1971,7 @@ void setup() {
   netSetLinkHandler(onLinkDatagram);
   soundBegin();
   loadSoundSettings();
+  loadHudSettings();
   tzOffsetSec = prefs.getInt("tz", tzOffsetSec);
 #endif
 }

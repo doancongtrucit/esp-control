@@ -118,13 +118,16 @@ void applyGofa(uint16_t chr, const uint8_t *data, size_t n) {
       else if (f == 4) id3 = v; else if (f == 5) d3 = v;
     });
     nav.speedLimit = signIdToSpeedLimit(id1);  // -1 clears when no limit sign
-    // Sort every sign slot into camera / other-warning. id1 is the current sign
-    // (no distance); id2/id3 are upcoming signs with distance.
-    int cam = -1, warn = -1, warnDist = -1;
+    // Sort every sign slot into camera / upcoming-limit / other-warning. id1 is
+    // the current sign (no distance); id2/id3 are upcoming signs with distance.
+    int cam = -1, warn = -1, warnDist = -1, limAhead = -1, limAheadDist = -1;
     auto sort = [&](uint32_t id, int dist) {
       if (id == 0) return;
+      const int lim = signIdToSpeedLimit(id);
       if (signIdIsCamera(id)) { if (cam < 0) cam = dist; }
-      else if (signIdToSpeedLimit(id) < 0) {  // not a speed-limit sign -> generic warning
+      else if (lim > 0) {  // a speed-limit sign ahead (with distance)
+        if (dist >= 0 && limAhead < 0) { limAhead = lim; limAheadDist = dist; }
+      } else {  // anything else -> generic warning
         if (warn < 0) { warn = (int)id; warnDist = dist; }
       }
     };
@@ -134,6 +137,8 @@ void applyGofa(uint16_t chr, const uint8_t *data, size_t n) {
     nav.cameraDistM = cam;
     nav.warnSignId = warn;
     nav.warnSignDistM = warnDist;
+    nav.limitAheadKmh = limAhead;
+    nav.limitAheadDistM = limAheadDist;
   } else if (chr == 0x3038) {  // NAV
     uint32_t state = 0, maneuver = 0, dist = 0; std::string road, next;
     pbWalk(data, n, [&](uint32_t f, uint32_t wt, uint64_t v, const uint8_t *b, size_t len) {

@@ -74,6 +74,8 @@ struct NavState {
   std::string nextStreet;    // road the upcoming maneuver turns onto
   int warnSignId = -1;       // non-speed, non-camera sign to show (-1 = none); raw GOFA sign id
   int warnSignDistM = -1;    // distance to warnSignId (-1 = "now"/unknown)
+  int limitAheadKmh = -1;    // an upcoming speed-limit sign (-1 = none)
+  int limitAheadDistM = -1;  // distance to limitAheadKmh
   std::string weather;
 };
 

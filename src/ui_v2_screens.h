@@ -3,7 +3,7 @@
 // exporting it. Only built with DECK_UI_V2.
 #pragma once
 
-enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break, HomeCtl, Timer, Ring, Hud };
+enum class Screen : uint8_t { Home, Monitor, Controls, Info, Claude, AiTools, Standby, Notify, Settings, Aram, Break, HomeCtl, Timer, Ring, Hud, HudSettings };
 Screen screen = Screen::Home;
 uint8_t controlsPage = 0;
 uint32_t drawnNotifyVersion = 0;
@@ -55,11 +55,14 @@ constexpr int NEXT_BTN_X = 150;
 constexpr int ARROW_BTN_W = 36;
 constexpr int STATUS_X = 228;
 
+// The HUD screen and its settings share the GOFA BLE link; everything else drops it.
+inline bool isHudContext(Screen s) { return s == Screen::Hud || s == Screen::HudSettings; }
+
 void uiShow(Screen target) {
-  // The HUD needs its own clean BLE advertisement (fff0, no ANCS) so VIETMAP
-  // LIVE can discover it; leaving the HUD restores iPhone notifications.
-  if (target == Screen::Hud && screen != Screen::Hud) ancsSetGofaMode(true);
-  else if (target != Screen::Hud && screen == Screen::Hud) ancsSetGofaMode(false);
+  // The HUD advertises a GOFA identity (no ANCS) so the GOFA app can connect;
+  // leaving the HUD context restores iPhone notifications. HUD settings keep it.
+  if (isHudContext(target) && !isHudContext(screen)) ancsSetGofaMode(true);
+  else if (!isHudContext(target) && isHudContext(screen)) ancsSetGofaMode(false);
   screen = target;
   fullRedrawRequested = true;
 }
@@ -83,7 +86,7 @@ void drawHeaderV2(const char *title, bool homeButton) {
 void drawHeaderStatusV2() {
   // The banner covers the header; the Notifications header uses this area for HIDE.
   if (bannerActive || screen == Screen::Notify || screen == Screen::Home || screen == Screen::Standby ||
-      screen == Screen::Break || screen == Screen::Ring || screen == Screen::Hud)
+      screen == Screen::Break || screen == Screen::Ring || isHudContext(screen))
     return;
   const bool stale = stats.everUpdated && millis() - stats.lastUpdateMs > STALE_AFTER_MS;
   const uint16_t dot = !stats.everUpdated ? T_DIVIDER : (stale ? T_DOWN : T_UP);
@@ -2860,7 +2863,7 @@ constexpr uint16_t HUD_AMBER = 0xFD20;
 struct HudShown {
   bool valid = false;
   int speed = -2, limit = -2, cam = -2, turnDist = -2, turnIcon = -2;
-  int warnId = -2, warnDist = -2;
+  int warnId = -2, warnDist = -2, limAhead = -2, limAheadDist = -2;
   bool over = false, stale = true;
   String street, nextStreet, weather;
 } hudShown;
@@ -2986,20 +2989,31 @@ void hudDrawCamera(int dist) {
   uiTextIn(UiFont::BodyBold, hudDist(dist), HUD_CAM_X + 33, HUD_CAM_Y + 30);
 }
 
+// Small line under the speed-limit sign: an upcoming speed-limit sign + distance.
+void hudDrawLimitAhead(int kmh, int dist) {
+  tft.fillRect(HUD_SIGN_CX - 40, 205, 120, 13, T_BG);
+  if (kmh <= 0) return;
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(HUD_AMBER, T_BG);
+  uiTextIn(UiFont::Small, String(kmh) + " · " + hudDist(dist), HUD_SIGN_CX, 211);
+}
+
 void hudDrawTop(const String &street, bool connected, bool stale) {
   tft.fillRect(0, 0, UI_SCREEN_W, UI_HEADER_H, T_BG);
   // Back chevron (top-left 40x32 is the global home button).
   tft.setTextColor(T_MUTED, T_BG);
   tft.setTextDatum(ML_DATUM);
   uiTextIn(UiFont::Body, "<", 12, UI_HEADER_H / 2);
+  // Settings gear (top-right) opens HUD Settings.
+  drawIcon(tft, Icon::Gear, UI_SCREEN_W - 28, UI_HEADER_H / 2 - 9, 18, T_MUTED, T_BG);
   String title = street;
   uint16_t col = T_TEXT;
   if (title.length() == 0) {
     title = connected ? (stale ? "Chờ dữ liệu..." : "GOFA") : "Chờ kết nối app";
     col = T_MUTED;
   }
-  const String fit = fitViText(title, 230, true);
-  drawViText(tft, (UI_SCREEN_W - viTextWidth(fit, true)) / 2 + 20, 7, fit, col, T_BG, true);
+  const String fit = fitViText(title, 210, true);  // between the chevron and the gear
+  drawViText(tft, 166 - viTextWidth(fit, true) / 2, 7, fit, col, T_BG, true);
 }
 
 void hudDrawWeather(const String &weather) {
@@ -3013,40 +3027,168 @@ void drawHudV2() {
   const hud::NavState &s = gofaNav();
   const bool connected = gofaHasData() && millis() - gofaLastFrameMs() < 10000UL;
   const bool stale = !gofaHasData() || millis() - gofaLastFrameMs() > 10000UL;
-  const bool over = s.speedLimit > 0 && s.speedKmh > s.speedLimit;
+  const bool over = s.speedLimit > 0 && s.speedKmh > s.speedLimit;  // red gauge: strict
   const String street(s.street.c_str());
-  const String nextStreet(s.nextStreet.c_str());
+  // Road shown by the arrow: the one being turned onto, or the current road.
+  const String arrowRoad((hudSettings.nextRoad ? s.nextStreet : s.street).c_str());
   const String weather(s.weather.c_str());
+  // Options that hide elements.
+  const int warnId = hudSettings.showWarn ? s.warnSignId : -1;
+  const int camDist = hudSettings.showCam ? s.cameraDistM : -1;
+  const int limAhead = hudSettings.signDist ? s.limitAheadKmh : -1;
   const bool all = !hudShown.valid;
 
   if (all || street != hudShown.street || connected != !hudShown.stale /*force*/ || stale != hudShown.stale)
     hudDrawTop(street, connected, stale);
   if (all || s.speedKmh != hudShown.speed || over != hudShown.over) hudDrawGauge(s.speedKmh, s.speedLimit, over);
-  if (all || s.turnIcon != hudShown.turnIcon || s.turnDistM != hudShown.turnDist || nextStreet != hudShown.nextStreet)
-    hudDrawTurn(s.turnIcon, s.turnDistM, nextStreet);
+  if (all || s.turnIcon != hudShown.turnIcon || s.turnDistM != hudShown.turnDist || arrowRoad != hudShown.nextStreet)
+    hudDrawTurn(s.turnIcon, s.turnDistM, arrowRoad);
   if (all || s.speedLimit != hudShown.limit) hudDrawSign(s.speedLimit);
-  if (all || s.cameraDistM != hudShown.cam) hudDrawCamera(s.cameraDistM);
-  if (all || s.warnSignId != hudShown.warnId || s.warnSignDistM != hudShown.warnDist)
-    hudDrawWarn(s.warnSignId, s.warnSignDistM);
+  if (all || limAhead != hudShown.limAhead || s.limitAheadDistM != hudShown.limAheadDist)
+    hudDrawLimitAhead(limAhead, s.limitAheadDistM);
+  if (all || camDist != hudShown.cam) hudDrawCamera(camDist);
+  if (all || warnId != hudShown.warnId || s.warnSignDistM != hudShown.warnDist)
+    hudDrawWarn(warnId, s.warnSignDistM);
   // The bottom strip shows the warning sign when present, otherwise weather.
-  if ((all || weather != hudShown.weather) && s.warnSignId < 0) hudDrawWeather(weather);
+  if ((all || weather != hudShown.weather) && warnId < 0) hudDrawWeather(weather);
+
+  // Audible over-speed warning, honouring the beep toggle and tolerance: beep on
+  // crossing the threshold, repeat every 3 s while over. Fresh data only.
+  const bool beepOver = hudSettings.overBeep && connected && s.speedLimit > 0 &&
+                        s.speedKmh > s.speedLimit + (int)hudOverTolKmh();
+  static uint32_t hudOverBeepMs = 0;
+  static bool prevBeepOver = false;
+  if (beepOver && (!prevBeepOver || millis() - hudOverBeepMs >= 3000)) {
+    playSound(Sound::Alert);
+    hudOverBeepMs = millis();
+  }
+  prevBeepOver = beepOver;
 
   hudShown.valid = true;
   hudShown.speed = s.speedKmh;
   hudShown.limit = s.speedLimit;
-  hudShown.cam = s.cameraDistM;
+  hudShown.cam = camDist;
   hudShown.turnDist = s.turnDistM;
   hudShown.turnIcon = s.turnIcon;
-  hudShown.warnId = s.warnSignId;
+  hudShown.warnId = warnId;
   hudShown.warnDist = s.warnSignDistM;
+  hudShown.limAhead = limAhead;
+  hudShown.limAheadDist = s.limitAheadDistM;
   hudShown.over = over;
   hudShown.stale = stale;
   hudShown.street = street;
-  hudShown.nextStreet = nextStreet;
+  hudShown.nextStreet = arrowRoad;
   hudShown.weather = weather;
 }
 
 void hudForceRedraw() { hudShown.valid = false; }
+
+// ===== HUD Settings screen =====
+enum HudSetTab : uint8_t { HS_NAV, HS_DEV, HS_TABS };
+uint8_t hudSettingsTab = HS_NAV;
+constexpr InfoTabSpec HUD_SET_TAB_SPECS[HS_TABS] = {
+    {"Dẫn đường", Icon::Globe, 0x0a84ff},
+    {"Thiết bị", Icon::Sliders, 0x8e8e93},
+};
+
+// Tab strip with Vietnamese labels (drawTabStrip's uiText drops diacritics).
+void drawHudTabStrip(int activeTab) {
+  tft.fillRect(0, TAB_Y, UI_SCREEN_W, TAB_H, T_BG);
+  for (int i = 0; i < HS_TABS; ++i) {
+    const CellRect c = gridCellIn(i, HS_TABS, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
+    const bool active = i == activeTab;
+    const uint16_t bg = active ? T_CARD : T_BG;
+    const uint16_t fg = active ? T_TEXT : T_MUTED;
+    tft.fillRoundRect(c.x, c.y, c.w, c.h + 4, 6, bg);
+    if (active) tft.fillRect(c.x, c.y + c.h - 2, c.w, 2, rgb565(HUD_SET_TAB_SPECS[i].line));
+    drawIcon(tft, HUD_SET_TAB_SPECS[i].icon, c.x + 24, c.y + 8, 14, fg, bg);
+    drawViText(tft, c.x + 44, c.y + 10, HUD_SET_TAB_SPECS[i].label, fg, bg, false);
+  }
+}
+
+// Settings row with a Vietnamese label (drawViText over an empty row box).
+void hudSetRowVi(int row, const char *viLabel, int x = SET_ROW_X, int w = SET_ROW_W) {
+  drawSetRow(row, nullptr, x, w);
+  drawViText(tft, x + 10, setRowY(row) + 8, viLabel, T_TEXT, T_CARD_ALT, false);
+}
+void hudSwitchRowVi(int row, const char *viLabel, bool on, int x = SET_ROW_X, int w = SET_ROW_W) {
+  hudSetRowVi(row, viLabel, x, w);
+  drawSwitch(x + w, row, on);
+}
+// Centred Vietnamese action-row label.
+void hudActionRowVi(int row, const char *viLabel, uint16_t color) {
+  drawSetRow(row, nullptr);
+  drawViText(tft, (UI_SCREEN_W - viTextWidth(viLabel, false)) / 2, setRowY(row) + 8, viLabel, color, T_CARD_ALT, false);
+}
+
+void drawHudSettingsV2() {
+  drawHeaderV2("HUD", true);
+  drawHudTabStrip(hudSettingsTab);
+  tft.fillRect(0, INFO_Y, UI_SCREEN_W, UI_SCREEN_H - INFO_Y, T_CARD);
+  for (String &cached : settingsCache) cached = "";
+  static const char *const TOL_LABELS[3] = {"+0", "+5", "+10"};
+  if (hudSettingsTab == HS_NAV) {
+    hudSwitchRowVi(0, "Cảnh báo vượt tốc độ", hudSettings.overBeep);
+    hudSetRowVi(1, "Ngưỡng vượt (km/h)");
+    drawSegments(1, TOL_LABELS, 3, hudSettings.overTol, false);
+    hudSwitchRowVi(2, "Biển báo", hudSettings.showWarn, SET_ROW_X, SET_HALF_W);
+    hudSwitchRowVi(2, "Camera", hudSettings.showCam, SET_RIGHT_X, SET_HALF_W);
+    hudSwitchRowVi(3, "Kh.cách", hudSettings.signDist, SET_ROW_X, SET_HALF_W);
+    hudSwitchRowVi(3, "Đường kế", hudSettings.nextRoad, SET_RIGHT_X, SET_HALF_W);
+    drawViText(tft, SET_ROW_X + 2, setRowY(4) + 8, "Khoảng cách: báo trước khi tới biển giới hạn.", T_MUTED, T_CARD, false);
+  } else {  // HS_DEV
+    hudSetRowVi(0, "Độ sáng");
+    drawSegments(0, nullptr, BRIGHTNESS_LEVELS, settings.brightness, true);
+    drawViText(tft, SET_ROW_X + 2, setRowY(1) + 8, "Quên iPhone: xoá bond ANCS để app GOFA giữ kết nối.", T_MUTED, T_CARD, false);
+    drawSetRow(2, nullptr);
+    drawViText(tft, SET_ROW_X + 10, setRowY(2) + 8, "Thiết bị", T_MUTED, T_CARD_ALT, false);
+    tft.setTextDatum(MR_DATUM);
+    tft.setTextColor(T_TEXT, T_CARD_ALT);
+    uiText(ancsGofaName(), SET_ROW_X + SET_ROW_W - 10, setRowY(2) + SET_ROW_H / 2, 2);  // ASCII, renders fine
+    hudActionRowVi(4, "Giữ: Quên iPhone", T_DOWN);
+  }
+}
+
+void touchHudSettingsV2(uint16_t x, uint16_t y) {
+  const int tab = gridIndexIn(x, y, HS_TABS, 1, TAB_X, TAB_Y, TAB_W, TAB_H, TAB_GAP);
+  if (tab >= 0) {
+    if (tab != hudSettingsTab) { hudSettingsTab = tab; fullRedrawRequested = true; }
+    return;
+  }
+  if (y < SET_ROW_Y0) return;
+  const int row = (y - SET_ROW_Y0) / SET_ROW_STEP;
+  if (row >= SET_ROWS || (y - SET_ROW_Y0) % SET_ROW_STEP >= SET_ROW_H) return;
+  const bool right = x >= SET_RIGHT_X;
+  bool changed = true, saveHud = true;
+  if (hudSettingsTab == HS_NAV) {
+    if (row == 0) hudSettings.overBeep = !hudSettings.overBeep;
+    else if (row == 1 && segmentAt(x, 3) >= 0) hudSettings.overTol = segmentAt(x, 3);
+    else if (row == 2) { bool &b = right ? hudSettings.showCam : hudSettings.showWarn; b = !b; }
+    else if (row == 3) { bool &b = right ? hudSettings.nextRoad : hudSettings.signDist; b = !b; }
+    else changed = false;
+  } else {  // HS_DEV
+    saveHud = false;
+    if (row == 0 && segmentAt(x, BRIGHTNESS_LEVELS) >= 0) {
+      settings.brightness = segmentAt(x, BRIGHTNESS_LEVELS);
+      applyBacklight();
+      saveSettings();
+    } else if (row == 4) {
+      if (holdRect(SET_ROW_X, 4, SET_ROW_W)) {
+        ancsForgetPairing();
+        restartWithMessage("iPhone forgotten", "Restarting...");
+      }
+      changed = false;
+    } else {
+      changed = false;
+    }
+  }
+  if (changed && saveHud) saveHudSettings();
+  if (changed) fullRedrawRequested = true;
+}
+
+void touchHudV2(uint16_t x, uint16_t y) {
+  if (y < UI_HEADER_H && x >= UI_SCREEN_W - 40) uiShow(Screen::HudSettings);  // gear
+}
 
 // ---------- Router ----------
 
@@ -3072,6 +3214,7 @@ void uiRenderFullV2() {
     case Screen::Timer: drawTimerV2(); break;
     case Screen::Ring: drawRingV2(); break;
     case Screen::Hud: hudForceRedraw(); drawHudV2(); break;
+    case Screen::HudSettings: drawHudSettingsV2(); break;
   }
   drawHeaderStatusV2();
   // A full redraw (e.g. navigating) must not leave an invisible banner that still eats header taps.
@@ -3143,6 +3286,11 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     fullRedrawRequested = true;
     return;
   }
+  // HUD settings: the top-left button goes back to the HUD, not home.
+  if (screen == Screen::HudSettings && y < UI_HEADER_H && x < HOME_BTN_W) {
+    uiShow(Screen::Hud);
+    return;
+  }
   if (screen != Screen::Home && y < UI_HEADER_H && x < HOME_BTN_W) {
     if (screen == Screen::Aram) aramDismissed = true;  // stay home until the next game
     if (screen == Screen::Claude) claudeAutoOpened = false;
@@ -3158,6 +3306,8 @@ void uiHandleTouchV2(uint16_t x, uint16_t y) {
     case Screen::Claude: touchClaudeV2(x, y); break;
     case Screen::HomeCtl: touchHaV2(x, y); break;
     case Screen::Timer: touchTimerV2(x, y); break;
+    case Screen::Hud: touchHudV2(x, y); break;
+    case Screen::HudSettings: touchHudSettingsV2(x, y); break;
     default: break;
   }
 }
@@ -3172,10 +3322,12 @@ void uiOpenForShot(const char *name, int tab) {
                  {"standby", Screen::Standby}, {"notify", Screen::Notify},   {"settings", Screen::Settings},
                  {"aram", Screen::Aram},       {"break", Screen::Break},
                  {"ha", Screen::HomeCtl},      {"timer", Screen::Timer},
-                 {"ring", Screen::Ring},       {"hud", Screen::Hud}};
+                 {"ring", Screen::Ring},       {"hud", Screen::Hud},
+                 {"hudset", Screen::HudSettings}};
   for (const auto &entry : SCREENS) {
     if (strcmp(entry.name, name) == 0) screen = entry.target;
   }
+  if (tab >= 0 && screen == Screen::HudSettings) hudSettingsTab = tab % HS_TABS;
   if (tab >= 0 && screen == Screen::Info) infoTab = tab % INFO_TABS;
   if (tab >= 0 && screen == Screen::Monitor) monitorTab = tab % MON_TABS;
   if (tab >= 0 && screen == Screen::Timer) timerTab = tab % TM_TABS;
